@@ -721,14 +721,31 @@ select.fi option{background:var(--surface2)}
 
 <!-- SÜPER ADMİN PANELİ -->
 <div class="overlay" id="superAdminOverlay" onclick="if(event.target===this)closeSuperAdmin()">
-  <div class="modal" style="width:560px">
+  <div class="modal" style="width:620px;max-height:90vh;overflow-y:auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div class="mtitle" style="margin-bottom:0">👑 İşletme Yönetimi</div>
-      <div style="font-size:11px;color:var(--accent);font-family:'IBM Plex Mono',monospace">SÜPER ADMİN</div>
+      <div class="mtitle" style="margin-bottom:0">👑 Süper Admin Paneli</div>
+      <button onclick="closeSuperAdmin()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0 4px">✕</button>
     </div>
-    <div id="isletmeList" style="margin-bottom:16px;max-height:280px;overflow-y:auto"></div>
-    <div style="border-top:1px solid var(--border);padding-top:14px">
-      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Yeni İşletme Ekle</div>
+
+    <!-- SEKMELER -->
+    <div style="display:flex;gap:2px;background:var(--surface2);border-radius:8px;padding:4px;margin-bottom:20px">
+      <button onclick="saTab('isletmeler')" id="saTab_isletmeler" style="flex:1;padding:8px;border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;background:var(--accent);color:#0f1117;transition:all .2s">🏢 İŞLETMELER</button>
+      <button onclick="saTab('tumdata')" id="saTab_tumdata" style="flex:1;padding:8px;border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;background:transparent;color:var(--muted);transition:all .2s">📊 TÜM VERİLER</button>
+      <button onclick="saTab('yeni')" id="saTab_yeni" style="flex:1;padding:8px;border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;background:transparent;color:var(--muted);transition:all .2s">➕ YENİ İŞLETME</button>
+    </div>
+
+    <!-- İŞLETMELER SEKMESİ -->
+    <div id="saPanel_isletmeler">
+      <div id="isletmeList" style="max-height:400px;overflow-y:auto"></div>
+    </div>
+
+    <!-- TÜM VERİLER SEKMESİ -->
+    <div id="saPanel_tumdata" style="display:none">
+      <div id="saAllData" style="max-height:450px;overflow-y:auto"></div>
+    </div>
+
+    <!-- YENİ İŞLETME SEKMESİ -->
+    <div id="saPanel_yeni" style="display:none">
       <div class="fgrid">
         <div class="fg"><div class="fl">İşletme Adı *</div><input class="fi" id="ni_ad" placeholder="Çiftlik Adı"></div>
         <div class="fg"><div class="fl">Yetkili Kişi</div><input class="fi" id="ni_yetkili" placeholder="Ad Soyad"></div>
@@ -740,6 +757,22 @@ select.fi option{background:var(--surface2)}
         <button class="btn btn-secondary" onclick="closeSuperAdmin()">Kapat</button>
         <button class="btn btn-primary" onclick="addIsletme()">➕ İşletme Ekle</button>
       </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- İŞLETME ADI DÜZENLE MODAL -->
+<div class="overlay" id="isletmeDuzeltOverlay" onclick="if(event.target===this){document.getElementById('isletmeDuzeltOverlay').classList.remove('open');_duzeltIsletmeId2=null;}">
+  <div class="modal" style="width:420px">
+    <div class="mtitle">✏️ İşletme Düzenle</div>
+    <div class="fgrid">
+      <div class="fg full"><div class="fl">İşletme Adı *</div><input class="fi" id="isletmeDuzeltAd" placeholder="Çiftlik Adı"></div>
+      <div class="fg full"><div class="fl">Yetkili Kişi</div><input class="fi" id="isletmeDuzeltYetkili" placeholder="Ad Soyad"></div>
+    </div>
+    <div class="mfooter">
+      <button class="btn btn-secondary" onclick="document.getElementById('isletmeDuzeltOverlay').classList.remove('open');_duzeltIsletmeId2=null;">İptal</button>
+      <button class="btn btn-primary" onclick="kaydetIsletmeDuzelt()">✔ Kaydet</button>
     </div>
   </div>
 </div>
@@ -1351,27 +1384,135 @@ async function removeUser(uid){
 // ══════════════════════════════════════════════════════
 // SÜPER ADMİN
 // ══════════════════════════════════════════════════════
+let _saActiveTab = 'isletmeler';
+
+function saTab(tab){
+  _saActiveTab = tab;
+  ['isletmeler','tumdata','yeni'].forEach(t=>{
+    const btn = document.getElementById('saTab_'+t);
+    const panel = document.getElementById('saPanel_'+t);
+    if(btn) {
+      if(t===tab){
+        btn.style.background='var(--accent)';btn.style.color='#0f1117';
+      } else {
+        btn.style.background='transparent';btn.style.color='var(--muted)';
+      }
+    }
+    if(panel) panel.style.display = t===tab ? '' : 'none';
+  });
+  if(tab==='tumdata') renderSATumData();
+}
+
 async function openSuperAdmin(){
   await renderIsletmeListUI();
+  saTab('isletmeler');
   document.getElementById('superAdminOverlay').classList.add('open');
 }
 function closeSuperAdmin(){document.getElementById('superAdminOverlay').classList.remove('open');}
+
 async function renderIsletmeListUI(){
   const list=await loadIsletmeler();
   document.getElementById('isletmeList').innerHTML=list.length
     ?list.map(isl=>`
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:7px;margin-bottom:6px;border-left:3px solid ${isl.color||'#4090e8'}">
-        <div style="width:36px;height:36px;border-radius:50%;background:${isl.color||'#4090e8'};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0">${isl.ad[0].toUpperCase()}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:600">${esc(isl.ad)}</div>
-          <div style="font-size:11px;color:var(--muted)">${isl.yetkili?esc(isl.yetkili):'—'}</div>
-        </div>
-        <div style="display:flex;gap:5px">
-          <button onclick="duzeltIsletmeAdmin('${isl.id}')" style="background:transparent;color:var(--teal);border:1px solid var(--teal);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;font-family:inherit">✏️ Admin</button>
-          <button onclick="silIsletme('${isl.id}')" style="background:transparent;color:var(--red);border:1px solid var(--red);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;font-family:inherit">🗑️</button>
+      <div style="background:var(--surface2);border-radius:8px;margin-bottom:8px;border-left:3px solid ${isl.color||'#4090e8'}">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px">
+          <div style="width:36px;height:36px;border-radius:50%;background:${isl.color||'#4090e8'};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0">${isl.ad[0].toUpperCase()}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:600">${esc(isl.ad)}</div>
+            <div style="font-size:11px;color:var(--muted)">${isl.yetkili?esc(isl.yetkili):'—'}</div>
+          </div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">
+            <button onclick="duzeltIsletme('${isl.id}')" style="background:transparent;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;font-family:inherit">✏️ İşletme</button>
+            <button onclick="duzeltIsletmeAdmin('${isl.id}')" style="background:transparent;color:var(--teal);border:1px solid var(--teal);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;font-family:inherit">🔑 Admin</button>
+            <button onclick="silIsletme('${isl.id}')" style="background:transparent;color:var(--red);border:1px solid var(--red);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;font-family:inherit">🗑️</button>
+          </div>
         </div>
       </div>`).join('')
     :'<div style="text-align:center;padding:20px;color:var(--muted)">Henüz işletme yok.</div>';
+}
+
+// İşletme adı/yetkili düzenleme
+let _duzeltIsletmeId2 = null;
+async function duzeltIsletme(islId){
+  const list = ls(LS_ISL)||[];
+  const isl = list.find(i=>i.id===islId);
+  if(!isl) return;
+  _duzeltIsletmeId2 = islId;
+  document.getElementById('isletmeDuzeltAd').value = isl.ad||'';
+  document.getElementById('isletmeDuzeltYetkili').value = isl.yetkili||'';
+  document.getElementById('isletmeDuzeltOverlay').classList.add('open');
+  setTimeout(()=>document.getElementById('isletmeDuzeltAd').focus(), 80);
+}
+async function kaydetIsletmeDuzelt(){
+  if(!_duzeltIsletmeId2) return;
+  const ad = document.getElementById('isletmeDuzeltAd').value.trim();
+  const yetkili = document.getElementById('isletmeDuzeltYetkili').value.trim();
+  if(!ad){toast('İşletme adı zorunlu!','err');return;}
+  showSync('syncing');
+  const {error} = await sb.from('isletmeler').update({ad, yetkili:yetkili||null}).eq('id',_duzeltIsletmeId2);
+  if(error){showSync('err');toast('Güncellenemedi!','err');return;}
+  showSync('ok');
+  const list = ls(LS_ISL)||[];
+  const isl = list.find(i=>i.id===_duzeltIsletmeId2);
+  if(isl){isl.ad=ad; isl.yetkili=yetkili||null; lss(LS_ISL,list);}
+  document.getElementById('isletmeDuzeltOverlay').classList.remove('open');
+  _duzeltIsletmeId2=null;
+  await renderIsletmeListUI();
+  toast('✔ İşletme güncellendi','ok');
+}
+
+// Tüm verileri süper admin için yükle
+async function renderSATumData(){
+  const el = document.getElementById('saAllData');
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)">Yükleniyor...</div>';
+  const list = ls(LS_ISL)||[];
+  if(!list.length){el.innerHTML='<div style="text-align:center;padding:20px;color:var(--muted)">İşletme yok.</div>';return;}
+  let html = '';
+  for(const isl of list){
+    const [{data:satislar},{data:hayvanlar}] = await Promise.all([
+      sb.from('satislar').select('*').eq('isletme_id',isl.id),
+      sb.from('hayvanlar').select('*').eq('isletme_id',isl.id)
+    ]);
+    const topSatis=(satislar||[]).reduce((a,r)=>a+(r.fiyat||0),0);
+    const topKapora=(satislar||[]).reduce((a,r)=>a+(r.kapora||0),0);
+    const topKalan=topSatis-topKapora;
+    html+=`<div style="background:var(--surface2);border-radius:10px;margin-bottom:12px;border-left:4px solid ${isl.color||'#4090e8'}">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:32px;height:32px;border-radius:50%;background:${isl.color||'#4090e8'};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff">${isl.ad[0].toUpperCase()}</div>
+          <div><div style="font-size:14px;font-weight:600">${isl.ad}</div>
+          <div style="font-size:11px;color:var(--muted)">${(hayvanlar||[]).length} hayvan · ${(satislar||[]).length} satış</div></div>
+        </div>
+        <div style="display:flex;gap:16px;font-family:'IBM Plex Mono',monospace;font-size:12px">
+          <div><div style="font-size:9px;color:var(--muted);text-transform:uppercase">Satış</div><div>₺${(topSatis/1000).toFixed(0)}K</div></div>
+          <div><div style="font-size:9px;color:var(--muted);text-transform:uppercase">Kapora</div><div style="color:var(--accent)">₺${(topKapora/1000).toFixed(0)}K</div></div>
+          <div><div style="font-size:9px;color:var(--muted);text-transform:uppercase">Kalan</div><div style="color:${topKalan>0?'var(--red)':'var(--green)'}">₺${(topKalan/1000).toFixed(0)}K</div></div>
+        </div>
+      </div>
+      ${(satislar||[]).length?`<div style="padding:8px 14px;overflow-x:auto">
+        <table style="width:100%;font-size:11px;border-collapse:collapse;min-width:400px">
+          <thead><tr style="color:var(--muted)">
+            <th style="text-align:left;padding:4px 6px;font-weight:500">Ad Soyad</th>
+            <th style="text-align:left;padding:4px 6px;font-weight:500">Tür</th>
+            <th style="text-align:left;padding:4px 6px;font-weight:500">Küpe</th>
+            <th style="text-align:right;padding:4px 6px;font-weight:500">Satış</th>
+            <th style="text-align:right;padding:4px 6px;font-weight:500">Kalan</th>
+          </tr></thead>
+          <tbody>${(satislar||[]).map(s=>{
+            const k=(s.fiyat||0)-(s.kapora||0);
+            return `<tr style="border-top:1px solid rgba(42,48,80,.3)">
+              <td style="padding:4px 6px;font-weight:500">${s.ad||'—'}</td>
+              <td style="padding:4px 6px;color:var(--muted)">${s.tur||'—'}</td>
+              <td style="padding:4px 6px;font-family:'IBM Plex Mono',monospace;color:var(--teal)">${s.kupe||'—'}</td>
+              <td style="padding:4px 6px;text-align:right;font-family:'IBM Plex Mono',monospace">₺${Math.round(s.fiyat||0).toLocaleString('tr-TR')}</td>
+              <td style="padding:4px 6px;text-align:right;font-family:'IBM Plex Mono',monospace;color:${k>0?'var(--red)':'var(--green)'}">₺${Math.round(k).toLocaleString('tr-TR')}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>`:`<div style="padding:10px 14px;font-size:12px;color:var(--muted)">Henüz satış kaydı yok.</div>`}
+    </div>`;
+  }
+  el.innerHTML = html;
 }
 
 let _duzeltUserId = null;
