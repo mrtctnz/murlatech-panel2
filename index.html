@@ -732,6 +732,7 @@ select.fi option{background:var(--surface2)}
       <button onclick="saTab('isletmeler')" id="saTab_isletmeler" style="flex:1;padding:8px;border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;background:var(--accent);color:#0f1117;transition:all .2s">🏢 İŞLETMELER</button>
       <button onclick="saTab('tumdata')" id="saTab_tumdata" style="flex:1;padding:8px;border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;background:transparent;color:var(--muted);transition:all .2s">📊 TÜM VERİLER</button>
       <button onclick="saTab('yeni')" id="saTab_yeni" style="flex:1;padding:8px;border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;background:transparent;color:var(--muted);transition:all .2s">➕ YENİ İŞLETME</button>
+      <button onclick="saTab('ayarlar')" id="saTab_ayarlar" style="flex:1;padding:8px;border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;background:transparent;color:var(--muted);transition:all .2s">⚙️ AYARLAR</button>
     </div>
 
     <!-- İŞLETMELER SEKMESİ -->
@@ -756,6 +757,32 @@ select.fi option{background:var(--surface2)}
       <div class="mfooter">
         <button class="btn btn-secondary" onclick="closeSuperAdmin()">Kapat</button>
         <button class="btn btn-primary" onclick="addIsletme()">➕ İşletme Ekle</button>
+      </div>
+    </div>
+
+    <!-- AYARLAR SEKMESİ -->
+    <div id="saPanel_ayarlar" style="display:none">
+      <div style="background:var(--surface2);border-radius:8px;padding:14px;margin-bottom:16px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Mevcut Hesap</div>
+        <div id="saAyarlarMevcut" style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--teal)"></div>
+      </div>
+      <div class="fgrid">
+        <div class="fg full">
+          <div class="fl">Ad Soyad</div>
+          <input class="fi" id="saAyarlarAd" placeholder="Süper Admin">
+        </div>
+        <div class="fg full">
+          <div class="fl">E-posta (boş bırakırsan değişmez)</div>
+          <input class="fi" id="saAyarlarEmail" type="email" placeholder="yeni@email.com">
+        </div>
+        <div class="fg full">
+          <div class="fl">Yeni PIN (boş bırakırsan değişmez)</div>
+          <input class="fi" id="saAyarlarPin" type="text" inputmode="numeric" maxlength="6" placeholder="4-6 hane">
+        </div>
+      </div>
+      <div class="mfooter">
+        <button class="btn btn-secondary" onclick="closeSuperAdmin()">Kapat</button>
+        <button class="btn btn-primary" onclick="kaydetSAyarlar()">✔ Kaydet</button>
       </div>
     </div>
 
@@ -1388,7 +1415,7 @@ let _saActiveTab = 'isletmeler';
 
 function saTab(tab){
   _saActiveTab = tab;
-  ['isletmeler','tumdata','yeni'].forEach(t=>{
+  ['isletmeler','tumdata','yeni','ayarlar'].forEach(t=>{
     const btn = document.getElementById('saTab_'+t);
     const panel = document.getElementById('saPanel_'+t);
     if(btn) {
@@ -1401,6 +1428,7 @@ function saTab(tab){
     if(panel) panel.style.display = t===tab ? '' : 'none';
   });
   if(tab==='tumdata') renderSATumData();
+  if(tab==='ayarlar') renderSAyarlar();
 }
 
 async function openSuperAdmin(){
@@ -1462,6 +1490,46 @@ async function kaydetIsletmeDuzelt(){
 }
 
 // Tüm verileri süper admin için yükle
+async function renderSAyarlar(){
+  if(!currentUser) return;
+  document.getElementById('saAyarlarMevcut').textContent = `${currentUser.ad||'—'} · ${currentUser.email||'—'}`;
+  document.getElementById('saAyarlarAd').value = currentUser.ad||'';
+  document.getElementById('saAyarlarEmail').value = '';
+  document.getElementById('saAyarlarPin').value = '';
+}
+
+async function kaydetSAyarlar(){
+  if(!currentUser) return;
+  const ad = document.getElementById('saAyarlarAd').value.trim();
+  const email = document.getElementById('saAyarlarEmail').value.trim().toLowerCase();
+  const pin = document.getElementById('saAyarlarPin').value.replace(/\D/g,'');
+  if(!ad){toast('Ad zorunlu!','err');return;}
+  const update = {ad};
+  if(email){
+    if(!email.includes('@')){toast('Geçerli e-posta girin!','err');return;}
+    update.email = email;
+  }
+  if(pin){
+    if(pin.length<4||pin.length>6){toast('PIN 4-6 hane!','err');return;}
+    update.pin_hash = await sha256(pin);
+  }
+  showSync('syncing');
+  const {error} = await sb.from('kullanicilar').update(update).eq('id',currentUser.id);
+  if(error){showSync('err');toast('Güncellenemedi: '+error.message,'err');return;}
+  showSync('ok');
+  // Session güncelle
+  currentUser.ad = ad;
+  if(email) currentUser.email = email;
+  setSession({...currentUser, ts:Date.now()});
+  applySession();
+  document.getElementById('saAyarlarMevcut').textContent = `${currentUser.ad} · ${currentUser.email||'—'}`;
+  // Cache güncelle
+  const cached = ls(LS_USERS+'sa')||[];
+  const u = cached.find(u=>u.id===currentUser.id);
+  if(u){Object.assign(u,update);lss(LS_USERS+'sa',cached);}
+  toast('✔ Bilgiler güncellendi'+(pin?` · Yeni PIN: ${pin}`:''),'ok');
+}
+
 async function renderSATumData(){
   const el = document.getElementById('saAllData');
   el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)">Yükleniyor...</div>';
