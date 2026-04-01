@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="MURLATECH">
 <title>MURLATECH | Besi Yönetim</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -452,10 +453,12 @@ select.fi option{background:var(--surface2)}
 <div class="toolbar">
   <button class="btn btn-primary" onclick="openMModal()">➕ Müşteri Satışı</button>
   <button class="btn btn-teal" onclick="openHModal()">🏷️ Hayvan Ekle</button>
+  <button class="btn btn-secondary" onclick="openImport()" style="background:rgba(160,224,64,.1);border-color:rgba(160,224,64,.4);color:#a0e840">📥 İçe Aktar</button>
   <input type="text" class="sbox" id="sbox" placeholder="🔍 Ara..." oninput="renderMain()">
   <div class="tright">
     <button class="btn btn-secondary" onclick="toggleExp()">📤 Dışa Aktar ▾</button>
     <div class="emenu" id="emenu">
+      <div class="ei" onclick="exportExcel()">📊 Excel (Orijinal Format)</div>
       <div class="ei" onclick="doCSV()">📄 CSV (Bu Sezon)</div>
       <div class="ei" onclick="doCSVAll()">📄 CSV (Tüm Sezonlar)</div>
       <div class="ei" onclick="window.print()">🖨️ Yazdır</div>
@@ -789,7 +792,64 @@ select.fi option{background:var(--surface2)}
   </div>
 </div>
 
-<!-- İŞLETME ADI DÜZENLE MODAL -->
+<!-- İÇE AKTAR MODAL -->
+<div class="overlay" id="importOverlay" onclick="if(event.target===this)closeImport()">
+  <div class="modal" style="width:680px;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="mtitle" style="margin-bottom:0">📥 İçe Aktar</div>
+      <button onclick="closeImport()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+
+    <!-- ADIM 1: Dosya Seç -->
+    <div id="importStep1">
+      <div style="border:2px dashed var(--border);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:all .2s"
+        id="importDropzone"
+        ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+        ondragleave="this.style.borderColor='var(--border)'"
+        ondrop="importDrop(event)">
+        <div style="font-size:36px;margin-bottom:8px">📂</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px">Excel, PDF veya Fotoğraf sürükleyin</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">.xlsx, .xls, .csv, .pdf, .jpg, .png desteklenir</div>
+        <button onclick="document.getElementById('importFileInput').click()" class="btn btn-primary">Dosya Seç</button>
+        <input type="file" id="importFileInput" style="display:none" accept=".xlsx,.xls,.csv,.pdf,.jpg,.jpeg,.png" onchange="importFileSelected(this)">
+      </div>
+    </div>
+
+    <!-- ADIM 2: Önizleme & Onay -->
+    <div id="importStep2" style="display:none">
+      <div id="importInfo" style="background:var(--surface2);border-radius:7px;padding:10px 14px;margin-bottom:14px;font-size:12px;font-family:'IBM Plex Mono',monospace;color:var(--teal)"></div>
+
+      <!-- Sütun Eşleştirme -->
+      <div id="importMapping" style="margin-bottom:14px"></div>
+
+      <!-- Önizleme Tablosu -->
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Önizleme (ilk 5 satır)</div>
+      <div id="importPreview" style="overflow-x:auto;max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:7px"></div>
+
+      <!-- İstatistik -->
+      <div id="importStats" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap"></div>
+
+      <div class="mfooter">
+        <button class="btn btn-secondary" onclick="importGeriDon()">← Geri</button>
+        <button class="btn btn-primary" id="importOnayBtn" onclick="importKaydet()">✔ Onayla ve Kaydet</button>
+      </div>
+    </div>
+
+    <!-- ADIM 3: Sonuç -->
+    <div id="importStep3" style="display:none;text-align:center;padding:24px">
+      <div style="font-size:48px;margin-bottom:12px" id="importResultIcon">✅</div>
+      <div style="font-size:16px;font-weight:600;margin-bottom:8px" id="importResultTitle"></div>
+      <div style="font-size:13px;color:var(--muted)" id="importResultDesc"></div>
+      <div class="mfooter" style="justify-content:center;margin-top:20px">
+        <button class="btn btn-secondary" onclick="importYeniDosya()">📂 Yeni Dosya</button>
+        <button class="btn btn-primary" onclick="closeImport()">Kapat</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
 <div class="overlay" id="isletmeDuzeltOverlay" onclick="if(event.target===this){document.getElementById('isletmeDuzeltOverlay').classList.remove('open');_duzeltIsletmeId2=null;}">
   <div class="modal" style="width:420px">
     <div class="mtitle">✏️ İşletme Düzenle</div>
@@ -3280,6 +3340,450 @@ function hesapKaydet(){
 }
 
 
+
+
+// ══════════════════════════════════════════════════════
+// İÇE AKTAR (IMPORT)
+// ══════════════════════════════════════════════════════
+let importParsedData = []; // [{tur, rows:[{ad,tel,kupe,fiyat,kapora,notlar,...}]}]
+
+function openImport(){
+  importParsedData = [];
+  document.getElementById('importStep1').style.display='';
+  document.getElementById('importStep2').style.display='none';
+  document.getElementById('importStep3').style.display='none';
+  document.getElementById('importOverlay').classList.add('open');
+}
+function closeImport(){ document.getElementById('importOverlay').classList.remove('open'); }
+function importGeriDon(){
+  document.getElementById('importStep1').style.display='';
+  document.getElementById('importStep2').style.display='none';
+}
+function importYeniDosya(){
+  document.getElementById('importStep1').style.display='';
+  document.getElementById('importStep2').style.display='none';
+  document.getElementById('importStep3').style.display='none';
+  document.getElementById('importFileInput').value='';
+}
+
+function importDrop(e){
+  e.preventDefault();
+  document.getElementById('importDropzone').style.borderColor='var(--border)';
+  const file = e.dataTransfer.files[0];
+  if(file) parseImportFile(file);
+}
+function importFileSelected(input){
+  const file = input.files[0];
+  if(file) parseImportFile(file);
+}
+
+async function parseImportFile(file){
+  const ext = file.name.split('.').pop().toLowerCase();
+  document.getElementById('importInfo').textContent = `⏳ "${file.name}" okunuyor...`;
+  document.getElementById('importStep1').style.display='none';
+  document.getElementById('importStep2').style.display='';
+
+  try{
+    if(['xlsx','xls','csv'].includes(ext)){
+      await parseExcelFile(file);
+    } else if(ext==='pdf'){
+      toast('PDF import yakında eklenecek. Şimdilik Excel veya CSV kullanın.','err');
+      importGeriDon(); return;
+    } else if(['jpg','jpeg','png'].includes(ext)){
+      await parseImageFile(file);
+    } else {
+      toast('Desteklenmeyen dosya formatı!','err');
+      importGeriDon(); return;
+    }
+  } catch(e){
+    toast('Dosya okunamadı: '+e.message,'err');
+    importGeriDon();
+  }
+}
+
+async function parseExcelFile(file){
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, {type:'array'});
+  importParsedData = [];
+
+  // Sütun eşleştirme haritaları
+  const MAPS = {
+    ad:      ['AD-SOYAD','AD SOYAD','ADSOYAD','İSİM','AD','NAME'],
+    tel:     ['TELEFON','TEL','PHONE'],
+    kupe:    ['KULAK NO','KÜPE NO','KULAKNO','KÜPE','KUPE'],
+    fiyat:   ['TUTARI','TUTAR','SATIŞFIYATI','SATIŞ','FİYAT'],
+    kapora:  ['KAPARO','KAPORA','DEPOZİTO'],
+    odendi:  ['VERİLEN','ÖDENDİ','ODENDI','VERILEN'],
+    notlar:  ['AÇIKLAMA','ACIKLAMA','NOTLAR','NOT'],
+    kg:      ['KG','KİLO','KİLOGRAM'],
+    kgFiyat: ['KG FİYATI','KGFIYAT','KG FİYAT','BİRİM FİYAT'],
+    sira:    ['SIRA NO','SIRA','NO'],
+  };
+
+  const TUR_MAP = {
+    'kuzu':['kuzu','KUZU'],
+    'koyun':['koyun','KOYUN'],
+    'dana':['dana','DANA'],
+    'duve':['duve','DÜVE','DUVE'],
+    'koc':['koc','KOÇ','KOC']
+  };
+
+  for(const sheetName of wb.SheetNames){
+    const ws = wb.Sheets[sheetName];
+    const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
+    if(!raw || raw.length < 2) continue;
+
+    // Başlık satırını bul
+    let headerRow = -1;
+    let headers = [];
+    for(let i=0;i<Math.min(5,raw.length);i++){
+      const row = raw[i];
+      if(!row) continue;
+      const cells = row.map(c=>String(c||'').toUpperCase().trim().replace(/\s+/g,' '));
+      if(cells.some(c=>['KULAK NO','AD-SOYAD','AD SOYAD','TELEFON','TUTARI'].some(h=>c.includes(h)))){
+        headerRow = i;
+        headers = cells;
+        break;
+      }
+    }
+    if(headerRow === -1) continue;
+
+    // Sütun indekslerini bul
+    const colIdx = {};
+    Object.entries(MAPS).forEach(([field, aliases])=>{
+      const idx = headers.findIndex(h=>aliases.some(a=>h.includes(a)));
+      if(idx>=0) colIdx[field]=idx;
+    });
+
+    // Türü belirle
+    let tur = 'dana';
+    const snUpper = sheetName.toUpperCase();
+    for(const [t, aliases] of Object.entries(TUR_MAP)){
+      if(aliases.some(a=>snUpper.includes(a.toUpperCase()))){tur=t;break;}
+    }
+    // HİSSE sekmesi için özel işlem
+    const isHisse = snUpper.includes('HİSSE') || snUpper.includes('HISSE');
+
+    // Veri satırlarını topla
+    const rows = [];
+    for(let i=headerRow+1;i<raw.length;i++){
+      const row = raw[i];
+      if(!row || row.every(c=>c===null||c==='')) continue;
+      const obj = {_tur: tur};
+      Object.entries(colIdx).forEach(([field,idx])=>{
+        const val = row[idx];
+        obj[field] = val !== null && val !== undefined ? String(val).trim() : '';
+      });
+      // Sayısal alanları dönüştür
+      ['fiyat','kapora','odendi','kg','kgFiyat','sira'].forEach(f=>{
+        if(obj[f]) obj[f] = parseFloat(String(obj[f]).replace(/[^\d.,-]/g,'').replace(',','.')) || 0;
+      });
+      // Sadece adı olan satırları al
+      if(obj.ad && obj.ad.length > 1 && obj.ad !== 'undefined') rows.push(obj);
+    }
+
+    if(rows.length > 0){
+      importParsedData.push({sheetName, tur, rows, colIdx, headers});
+    }
+  }
+
+  renderImportPreview();
+}
+
+async function parseImageFile(file){
+  // Görseli Claude API ile OCR yap
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const base64 = e.target.result.split(',')[1];
+    document.getElementById('importInfo').textContent = '🤖 Görsel analiz ediliyor...';
+    try {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          model:'claude-sonnet-4-20250514',
+          max_tokens:2000,
+          messages:[{
+            role:'user',
+            content:[
+              {type:'image',source:{type:'base64',media_type:file.type,data:base64}},
+              {type:'text',text:`Bu görseldeki tablodan satır satır JSON çıkar. Her satır için: {"ad":"","tel":"","kupe":"","fiyat":0,"kapora":0,"notlar":"","tur":"dana"} formatında döndür. Sadece JSON array döndür, başka açıklama yapma. Tür tahmin et (dana/duve/koc/koyun/kuzu).`}
+            ]
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = data.content?.[0]?.text||'[]';
+      const clean = text.replace(/```json|```/g,'').trim();
+      const parsed = JSON.parse(clean);
+      if(parsed.length){
+        importParsedData = [{sheetName:'Görsel',tur:'dana',rows:parsed.map(r=>({...r,_tur:r.tur||'dana'})),colIdx:{},headers:[]}];
+        renderImportPreview();
+      } else {
+        toast('Görselden veri çıkarılamadı.','err'); importGeriDon();
+      }
+    } catch(e){ toast('Görsel analiz hatası: '+e.message,'err'); importGeriDon(); }
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderImportPreview(){
+  if(!importParsedData.length){
+    toast('Tanınabilir veri bulunamadı.','err');
+    importGeriDon(); return;
+  }
+
+  // Toplam istatistik
+  const totalRows = importParsedData.reduce((a,s)=>a+s.rows.length,0);
+  document.getElementById('importInfo').innerHTML =
+    `✅ <b>${importParsedData.length}</b> sekme okundu · <b>${totalRows}</b> kayıt bulundu`;
+
+  // Sektör seçici + önizleme
+  let mappingHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  importParsedData.forEach((sheet,i)=>{
+    mappingHtml += `<button onclick="showSheetPreview(${i})" id="sheetBtn_${i}"
+      style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:${i===0?'var(--accent)':'var(--surface2)'};color:${i===0?'#0f1117':'var(--muted)'};cursor:pointer;font-size:12px;font-family:inherit">
+      ${esc(sheet.sheetName)} (${sheet.rows.length})
+    </button>`;
+  });
+  mappingHtml += '</div>';
+
+  // Tür eşleştirme
+  mappingHtml += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">';
+  importParsedData.forEach((sheet,i)=>{
+    mappingHtml += `<div style="display:flex;align-items:center;gap:6px;font-size:12px">
+      <span style="color:var(--muted)">${esc(sheet.sheetName)}:</span>
+      <select onchange="importParsedData[${i}].tur=this.value"
+        style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 7px;color:var(--text);font-size:12px;font-family:inherit">
+        ${TYPES.map(t=>`<option value="${t}" ${sheet.tur===t?'selected':''}>${TLABEL[t]}</option>`).join('')}
+      </select>
+    </div>`;
+  });
+  mappingHtml += '</div>';
+
+  document.getElementById('importMapping').innerHTML = mappingHtml;
+  showSheetPreview(0);
+
+  // İstatistik
+  let statsHtml = '';
+  importParsedData.forEach(s=>{
+    const totSatis = s.rows.reduce((a,r)=>a+(r.fiyat||0),0);
+    const totKapora = s.rows.reduce((a,r)=>a+(r.kapora||0),0);
+    statsHtml += `<div style="background:var(--surface2);border-radius:6px;padding:8px 12px;font-size:11px">
+      <div style="color:var(--muted);margin-bottom:3px">${esc(s.sheetName)}</div>
+      <div style="font-family:'IBM Plex Mono',monospace">${s.rows.length} kayıt · ₺${fmt(totSatis)} satış · ₺${fmt(totKapora)} kapora</div>
+    </div>`;
+  });
+  document.getElementById('importStats').innerHTML = statsHtml;
+}
+
+function showSheetPreview(idx){
+  // Buton stillerini güncelle
+  importParsedData.forEach((_,i)=>{
+    const btn = document.getElementById('sheetBtn_'+i);
+    if(btn){
+      btn.style.background = i===idx?'var(--accent)':'var(--surface2)';
+      btn.style.color = i===idx?'#0f1117':'var(--muted)';
+    }
+  });
+
+  const sheet = importParsedData[idx];
+  const preview = sheet.rows.slice(0,5);
+  const fields = ['ad','tel','kupe','fiyat','kapora','odendi','kg','notlar'];
+  const labels = {ad:'Ad Soyad',tel:'Telefon',kupe:'Küpe No',fiyat:'Satış ₺',kapora:'Kapora ₺',odendi:'Ödendi ₺',kg:'KG',notlar:'Notlar'};
+
+  let tbl = `<table style="width:100%;font-size:11px;border-collapse:collapse">
+    <thead><tr style="background:var(--surface)">
+      ${fields.filter(f=>preview.some(r=>r[f])).map(f=>`<th style="padding:6px 8px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">${labels[f]||f}</th>`).join('')}
+    </tr></thead>
+    <tbody>`;
+  preview.forEach(r=>{
+    tbl += `<tr style="border-bottom:1px solid var(--border)">
+      ${fields.filter(f=>preview.some(row=>row[f])).map(f=>`<td style="padding:5px 8px">${esc(String(r[f]||''))}</td>`).join('')}
+    </tr>`;
+  });
+  if(sheet.rows.length>5) tbl += `<tr><td colspan="20" style="padding:6px 8px;color:var(--muted);text-align:center">...ve ${sheet.rows.length-5} kayıt daha</td></tr>`;
+  tbl += '</tbody></table>';
+  document.getElementById('importPreview').innerHTML = tbl;
+}
+
+async function importKaydet(){
+  if(!importParsedData.length){toast('Kaydedilecek veri yok!','err');return;}
+  const btn = document.getElementById('importOnayBtn');
+  btn.textContent = '⏳ Kaydediliyor...';
+  btn.disabled = true;
+
+  let saved=0, errors=0;
+  for(const sheet of importParsedData){
+    for(const row of sheet.rows){
+      const tur = sheet.tur;
+      const id = Date.now().toString(36)+Math.random().toString(36).slice(2,5)+'_'+saved;
+      const obj = {
+        id, ad:row.ad||'', tel:row.tel||'', tc:'',
+        kupe:row.kupe||'', musteriPay:1, toplamPay:0, sira:row.sira||0,
+        fiyat:row.fiyat||0, kapora:row.kapora||0,
+        notlar:row.notlar||'', _t:tur
+      };
+      // LocalStorage'a ekle
+      const rows = getRows(tur);
+      if(!rows.find(r=>r.ad===obj.ad&&r.kupe===obj.kupe&&r.fiyat===obj.fiyat)){
+        rows.push(obj);
+        setRows(tur, rows);
+        // Supabase'e sync
+        try{
+          await syncSatis(obj, tur);
+          saved++;
+        } catch(e){ errors++; }
+      } else { saved++; } // Zaten var, atla
+    }
+  }
+
+  btn.textContent = '✔ Onayla ve Kaydet';
+  btn.disabled = false;
+
+  document.getElementById('importStep2').style.display='none';
+  document.getElementById('importStep3').style.display='';
+  document.getElementById('importResultIcon').textContent = errors===0?'✅':'⚠️';
+  document.getElementById('importResultTitle').textContent = `${saved} kayıt başarıyla aktarıldı!`;
+  document.getElementById('importResultDesc').textContent = errors>0?`${errors} kayıt hata nedeniyle aktarılamadı.`:'Tüm veriler sisteme kaydedildi.';
+
+  clearHistCache();
+  renderAll();
+}
+
+// ══════════════════════════════════════════════════════
+// DIŞA AKTAR (EXPORT) - Orijinal Excel Formatında
+// ══════════════════════════════════════════════════════
+function exportExcel(){
+  const wb = XLSX.utils.book_new();
+  const seasons = getSeasons();
+  const sezonAd = seasons[currentSeason]?.name || 'Sezon';
+
+  // Stil yardımcıları (SheetJS Community'de sınırlı stil desteği var)
+  const makeSheet = (title, headers, rows) => {
+    const data = [[title], headers, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    // Sütun genişlikleri
+    ws['!cols'] = headers.map(()=>({wch:16}));
+    ws['!cols'][1] = {wch:24}; // Ad Soyad sütunu geniş
+    // Başlık satırı birleştir
+    ws['!merges'] = [{s:{r:0,c:0},e:{r:0,c:headers.length-1}}];
+    return ws;
+  };
+
+  // Kalan formülü için yardımcı
+  const kalan = (fiyat, kapora, odendi) => (fiyat||0) - (kapora||0) - (odendi||0);
+
+  // KUZU SEKMESİ
+  const kuzuRows = getRows('kuzu');
+  if(kuzuRows.length >= 0){
+    const ws = makeSheet(`KUZU LİSTE - ${sezonAd}`,
+      ['KULAK NO','AD-SOYAD','KG','CİNSİ','KG FİYATI','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
+      kuzuRows.map((r,i)=>[
+        r.kupe||'', r.ad||'', r.kg||'', 'kuzu', r.kgFiyat||'',
+        r.fiyat||0, r.kapora||0, r.odendi||0,
+        kalan(r.fiyat,r.kapora,r.odendi),
+        r.notlar||'', r.tel||''
+      ])
+    );
+    XLSX.utils.book_append_sheet(wb, ws, 'kuzu');
+  }
+
+  // KOYUN SEKMESİ
+  const koyunRows = getRows('koyun');
+  if(koyunRows.length >= 0){
+    const ws = makeSheet(`KOYUN LİSTE - ${sezonAd}`,
+      ['KULAK NO','AD-SOYAD','KG','CİNSİ','KG FİYATI','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
+      koyunRows.map(r=>[
+        r.kupe||'', r.ad||'', r.kg||'', 'koyun', r.kgFiyat||'',
+        r.fiyat||0, r.kapora||0, r.odendi||0,
+        kalan(r.fiyat,r.kapora,r.odendi),
+        r.notlar||'', r.tel||''
+      ])
+    );
+    XLSX.utils.book_append_sheet(wb, ws, 'koyun');
+  }
+
+  // DANA SEKMESİ
+  const danaRows = getRows('dana');
+  if(danaRows.length >= 0){
+    const ws = makeSheet(`DANA LİSTE - ${sezonAd}`,
+      ['SIRA NO','KULAK NO','İSİM','KG','KG FİYAT','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
+      danaRows.map(r=>[
+        r.sira||'', r.kupe||'', r.ad||'', r.kg||'', r.kgFiyat||'',
+        r.fiyat||0, r.kapora||0, r.odendi||0,
+        kalan(r.fiyat,r.kapora,r.odendi),
+        r.notlar||'', r.tel||''
+      ])
+    );
+    XLSX.utils.book_append_sheet(wb, ws, 'dana');
+  }
+
+  // DÜVE SEKMESİ
+  const duveRows = getRows('duve');
+  if(duveRows.length >= 0){
+    const ws = makeSheet(`DÜVE LİSTE - ${sezonAd}`,
+      ['SIRA NO','KULAK NO','İSİM','KG','KG FİYAT','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
+      duveRows.map(r=>[
+        r.sira||'', r.kupe||'', r.ad||'', r.kg||'', r.kgFiyat||'',
+        r.fiyat||0, r.kapora||0, r.odendi||0,
+        kalan(r.fiyat,r.kapora,r.odendi),
+        r.notlar||'', r.tel||''
+      ])
+    );
+    XLSX.utils.book_append_sheet(wb, ws, 'duve');
+  }
+
+  // KOÇ SEKMESİ
+  const kocRows = getRows('koc');
+  if(kocRows.length >= 0){
+    const ws = makeSheet(`KOÇ LİSTE - ${sezonAd}`,
+      ['SIRA NO','KULAK NO','İSİM','KG','KG FİYAT','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
+      kocRows.map(r=>[
+        r.sira||'', r.kupe||'', r.ad||'', r.kg||'', r.kgFiyat||'',
+        r.fiyat||0, r.kapora||0, r.odendi||0,
+        kalan(r.fiyat,r.kapora,r.odendi),
+        r.notlar||'', r.tel||''
+      ])
+    );
+    XLSX.utils.book_append_sheet(wb, ws, 'koc');
+  }
+
+  // DANA HİSSE SEKMESİ (hayvan bazlı)
+  const hd = getHD();
+  const danaHayvanlar = Object.values(hd).filter(h=>h.type==='dana').sort((a,b)=>(a.sira||999)-(b.sira||999));
+  if(danaHayvanlar.length > 0){
+    const hisseData = [['DANA HİSSE LİSTESİ - '+sezonAd]];
+    danaHayvanlar.forEach(h=>{
+      const owners = danaRows.filter(r=>r.kupe===h.kupe);
+      hisseData.push([]);
+      hisseData.push(['','KESİM SIRASI', h.sira||'']);
+      hisseData.push(['','KULAK NO', h.kupe||'']);
+      hisseData.push(['','HİSSE SAYISI', h.toplamPay||7]);
+      hisseData.push(['','AD SOYAD','KG','KG FİYATI','TUTARI','KAPORA','VERİLEN','KALAN','AÇIKLAMA','TELEFON']);
+      owners.forEach((r,i)=>{
+        hisseData.push([
+          i+1, r.ad||'', r.kg||'', r.kgFiyat||'',
+          r.fiyat||0, r.kapora||0, r.odendi||0,
+          kalan(r.fiyat,r.kapora,r.odendi),
+          r.notlar||'', r.tel||''
+        ]);
+      });
+    });
+    const wsHisse = XLSX.utils.aoa_to_sheet(hisseData);
+    wsHisse['!cols'] = Array(10).fill({wch:16});
+    wsHisse['!cols'][1] = {wch:24};
+    XLSX.utils.book_append_sheet(wb, wsHisse, 'DANA HİSSE');
+  }
+
+  // Dosyayı indir
+  const isletmeler = ls(LS_ISL)||[];
+  const isl = isletmeler.find(i=>i.id===activeIsletmeId);
+  const fileName = `${isl?isl.ad:'Kayitlar'}_${sezonAd}_${new Date().toLocaleDateString('tr-TR').replace(/\./g,'-')}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+  toast(`📊 "${fileName}" indirildi`,'ok');
+  document.getElementById('emenu').classList.remove('open');
+}
 
 
 start();
