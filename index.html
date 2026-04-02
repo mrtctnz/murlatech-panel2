@@ -1864,7 +1864,7 @@ async function saveNewSeason(){
   setSeasons(seasons);
   currentSeason=newSid; setActiveSid(newSid);
   closeNS(); renderSeasonBar(); renderAll();
-  toast(`✔ "${esc(name)}" sezonu açıldı`,'ok');
+  toast(name + ' sezonu acildi','ok');
 }
 
 // ══════════════════════════════════════════════════════
@@ -2891,7 +2891,7 @@ function renderFinans(){
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;color:${c};width:110px">${TLABEL[type]}</div>
         <div style="flex:1;min-width:180px">
-          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:5px"><span>Kapora tahsilatı</span><span style="font-family:'IBM Plex Mono',monospace">${pct}%</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:5px"><span>Kapora tahsilatı</span><span style="font-family:IBM Plex Mono,monospace">${pct}%</span></div>
           <div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${c};border-radius:4px"></div></div>
         </div>
         <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -3013,7 +3013,8 @@ function renderKesimPlani(){
     <div class="ksump"><div class="ksump-lbl">Hayvan Sayısı</div><div class="ksump-val">${animalsToday.length}</div></div>
     <div class="ksump"><div class="ksump-lbl">Toplam Pay</div><div class="ksump-val">${totPay}</div></div>
     <div class="ksump"><div class="ksump-lbl">Sahip Sayısı</div><div class="ksump-val">${ownersToday.length}</div></div>
-    <div class="ksump"><div class="ksump-lbl" style="color:;
+    <div class="ksump"><div class="ksump-lbl">Sahip Sayisi</div><div class="ksump-val">${ownersToday.length}</div></div>
+  </div>`:'';
 }
 
 function hesapYuvarla(dir){
@@ -3082,7 +3083,7 @@ function importFileSelected(input){
 
 async function parseImportFile(file){
   const ext = file.name.split('.').pop().toLowerCase();
-  document.getElementById('importInfo').textContent = `⏳ "${file.name}" okunuyor...`;
+  document.getElementById('importInfo').textContent = 'Yukleniyor: ' + file.name;
   document.getElementById('importStep1').style.display='none';
   document.getElementById('importStep2').style.display='';
 
@@ -3194,120 +3195,57 @@ async function parseExcelFile(file){
 }
 
 async function parseImageFile(file){
-  // Görseli Claude API ile OCR yap
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    const base64 = e.target.result.split(',')[1];
-    document.getElementById('importInfo').textContent = '🤖 Görsel analiz ediliyor...';
-    try {
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          model:'claude-sonnet-4-20250514',
-          max_tokens:2000,
-          messages:[{
-            role:'user',
-            content:[
-              {type:'image',source:{type:'base64',media_type:file.type,data:base64}},
-              {type:'text',text:`Bu görseldeki tablodan satır satır JSON çıkar. Her satır için: {"ad":"","tel":"","kupe":"","fiyat":0,"kapora":0,"notlar":"","tur":"dana"} formatında döndür. Sadece JSON array döndür, başka açıklama yapma. Tür tahmin et (dana/duve/koc/koyun/kuzu).`}
-            ]
-          }]
-        })
-      });
-      const data = await resp.json();
-      const text = data.content?.[0]?.text||'[]';
-      const clean = text.replace(/```json|```/g,'').trim();
-      const parsed = JSON.parse(clean);
-      if(parsed.length){
-        importParsedData = [{sheetName:'Görsel',tur:'dana',rows:parsed.map(r=>({...r,_tur:r.tur||'dana'})),colIdx:{},headers:[]}];
-        renderImportPreview();
-      } else {
-        toast('Görselden veri çıkarılamadı.','err'); importGeriDon();
-      }
-    } catch(e){ toast('Görsel analiz hatası: '+e.message,'err'); importGeriDon(); }
-  };
-  reader.readAsDataURL(file);
+  toast('Fotograf import ozelligi yakin zamanda eklenecek. Excel veya CSV kullanin.','err');
+  importGeriDon();
 }
 
 function renderImportPreview(){
-  if(!importParsedData.length){
-    toast('Tanınabilir veri bulunamadı.','err');
-    importGeriDon(); return;
-  }
-
-  // Toplam istatistik
-  const totalRows = importParsedData.reduce((a,s)=>a+s.rows.length,0);
-  document.getElementById('importInfo').innerHTML =
-    `✅ <b>${importParsedData.length}</b> sekme okundu · <b>${totalRows}</b> kayıt bulundu`;
-
-  // Sektör seçici + önizleme
-  let mappingHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
-  importParsedData.forEach((sheet,i)=>{
-    mappingHtml += `<button onclick="showSheetPreview(${i})" id="sheetBtn_${i}"
-      style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:${i===0?'var(--accent)':'var(--surface2)'};color:${i===0?'#0f1117':'var(--muted)'};cursor:pointer;font-size:12px;font-family:inherit">
-      ${esc(sheet.sheetName)} (${sheet.rows.length})
-    </button>`;
+  if(!importParsedData.length){ toast('Taninamayan veri bulunamadi.','err'); importGeriDon(); return; }
+  const totalRows = importParsedData.reduce(function(a,s){return a+s.rows.length;},0);
+  document.getElementById('importInfo').innerHTML = '<b>' + importParsedData.length + '</b> sekme · <b>' + totalRows + '</b> kayit bulundu';
+  
+  var btns = '';
+  importParsedData.forEach(function(sheet,i){
+    var bg = i===0 ? 'var(--accent)' : 'var(--surface2)';
+    var clr = i===0 ? '#0f1117' : 'var(--muted)';
+    btns += '<button onclick="showSheetPreview('+i+')" id="sheetBtn_'+i+'" style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:'+bg+';color:'+clr+';cursor:pointer;font-size:12px;font-family:inherit">'+esc(sheet.sheetName)+' ('+sheet.rows.length+')</button>';
   });
-  mappingHtml += '</div>';
-
-  // Tür eşleştirme
-  mappingHtml += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">';
-  importParsedData.forEach((sheet,i)=>{
-    mappingHtml += `<div style="display:flex;align-items:center;gap:6px;font-size:12px">
-      <span style="color:var(--muted)">${esc(sheet.sheetName)}:</span>
-      <select onchange="importParsedData[${i}].tur=this.value"
-        style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 7px;color:var(--text);font-size:12px;font-family:inherit">
-        ${TYPES.map(t=>`<option value="${t}" ${sheet.tur===t?'selected':''}>${TLABEL[t]}</option>`).join('')}
-      </select>
-    </div>`;
+  
+  var turSec = '';
+  importParsedData.forEach(function(sheet,i){
+    var opts = TYPES.map(function(t){ return '<option value="'+t+'"'+(sheet.tur===t?' selected':'')+'>'+TLABEL[t]+'</option>'; }).join('');
+    turSec += '<div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="color:var(--muted)">'+esc(sheet.sheetName)+':</span><select onchange="importParsedData['+i+'].tur=this.value" style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 7px;color:var(--text);font-size:12px;font-family:inherit">'+opts+'</select></div>';
   });
-  mappingHtml += '</div>';
-
-  document.getElementById('importMapping').innerHTML = mappingHtml;
+  
+  document.getElementById('importMapping').innerHTML = 
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' + btns + '</div>' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">' + turSec + '</div>';
+  
   showSheetPreview(0);
-
-  // İstatistik
-  let statsHtml = '';
-  importParsedData.forEach(s=>{
-    const totSatis = s.rows.reduce((a,r)=>a+(r.fiyat||0),0);
-    const totKapora = s.rows.reduce((a,r)=>a+(r.kapora||0),0);
-    statsHtml += `<div style="background:var(--surface2);border-radius:6px;padding:8px 12px;font-size:11px">
-      <div style="color:var(--muted);margin-bottom:3px">${esc(s.sheetName)}</div>
-      <div style="font-family:'IBM Plex Mono',monospace">${s.rows.length} kayıt · ₺${fmt(totSatis)} satış · ₺${fmt(totKapora)} kapora</div>
-    </div>`;
+  
+  var statsHtml = '';
+  importParsedData.forEach(function(s){
+    var totS = s.rows.reduce(function(a,r){return a+(r.fiyat||0);},0);
+    var totK = s.rows.reduce(function(a,r){return a+(r.kapora||0);},0);
+    statsHtml += '<div style="background:var(--surface2);border-radius:6px;padding:8px 12px;font-size:11px"><div style="color:var(--muted);margin-bottom:3px">'+esc(s.sheetName)+'</div><div style="font-family:IBM Plex Mono,monospace">'+s.rows.length+' kayit - '+fmt(totS)+' satis - '+fmt(totK)+' kapora</div></div>';
   });
   document.getElementById('importStats').innerHTML = statsHtml;
 }
 
 function showSheetPreview(idx){
-  // Buton stillerini güncelle
-  importParsedData.forEach((_,i)=>{
-    const btn = document.getElementById('sheetBtn_'+i);
-    if(btn){
-      btn.style.background = i===idx?'var(--accent)':'var(--surface2)';
-      btn.style.color = i===idx?'#0f1117':'var(--muted)';
-    }
+  importParsedData.forEach(function(_,i){
+    var btn=document.getElementById('sheetBtn_'+i);
+    if(btn){btn.style.background=i===idx?'var(--accent)':'var(--surface2)';btn.style.color=i===idx?'#0f1117':'var(--muted)';}
   });
-
-  const sheet = importParsedData[idx];
-  const preview = sheet.rows.slice(0,5);
-  const fields = ['ad','tel','kupe','fiyat','kapora','odendi','kg','notlar'];
-  const labels = {ad:'Ad Soyad',tel:'Telefon',kupe:'Küpe No',fiyat:'Satış ₺',kapora:'Kapora ₺',odendi:'Ödendi ₺',kg:'KG',notlar:'Notlar'};
-
-  let tbl = `<table style="width:100%;font-size:11px;border-collapse:collapse">
-    <thead><tr style="background:var(--surface)">
-      ${fields.filter(f=>preview.some(r=>r[f])).map(f=>`<th style="padding:6px 8px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">${labels[f]||f}</th>`).join('')}
-    </tr></thead>
-    <tbody>`;
-  preview.forEach(r=>{
-    tbl += `<tr style="border-bottom:1px solid var(--border)">
-      ${fields.filter(f=>preview.some(row=>row[f])).map(f=>`<td style="padding:5px 8px">${esc(String(r[f]||''))}</td>`).join('')}
-    </tr>`;
-  });
-  if(sheet.rows.length>5) tbl += `<tr><td colspan="20" style="padding:6px 8px;color:var(--muted);text-align:center">...ve ${sheet.rows.length-5} kayıt daha</td></tr>`;
-  tbl += '</tbody></table>';
-  document.getElementById('importPreview').innerHTML = tbl;
+  var sheet=importParsedData[idx];
+  var preview=sheet.rows.slice(0,5);
+  var fields=['ad','tel','kupe','fiyat','kapora','odendi','kg','notlar'];
+  var labels={ad:'Ad Soyad',tel:'Telefon',kupe:'Kupe No',fiyat:'Satis',kapora:'Kapora',odendi:'Odendi',kg:'KG',notlar:'Notlar'};
+  var visFields=fields.filter(function(f){return preview.some(function(r){return r[f];});});
+  var th=visFields.map(function(f){return '<th style="padding:6px 8px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">'+(labels[f]||f)+'</th>';}).join('');
+  var rows=preview.map(function(r){return '<tr style="border-bottom:1px solid var(--border)">'+visFields.map(function(f){return '<td style="padding:5px 8px">'+esc(String(r[f]||''))+'</td>';}).join('')+'</tr>';}).join('');
+  var more=sheet.rows.length>5?'<tr><td colspan="20" style="padding:6px;color:var(--muted);text-align:center">...ve '+(sheet.rows.length-5)+' kayit daha</td></tr>':'';
+  document.getElementById('importPreview').innerHTML='<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="background:var(--surface)">'+th+'</tr></thead><tbody>'+rows+more+'</tbody></table>';
 }
 
 async function importKaydet(){
@@ -3347,8 +3285,8 @@ async function importKaydet(){
   document.getElementById('importStep2').style.display='none';
   document.getElementById('importStep3').style.display='';
   document.getElementById('importResultIcon').textContent = errors===0?'✅':'⚠️';
-  document.getElementById('importResultTitle').textContent = `${saved} kayıt başarıyla aktarıldı!`;
-  document.getElementById('importResultDesc').textContent = errors>0?`${errors} kayıt hata nedeniyle aktarılamadı.`:'Tüm veriler sisteme kaydedildi.';
+  document.getElementById('importResultTitle').textContent = saved + ' kayit basariyla aktarildi!';
+  document.getElementById('importResultDesc').textContent = errors>0 ? (errors+' kayit aktarilamadi.') : 'Tum veriler sisteme kaydedildi.';
 
   clearHistCache();
   renderAll();
@@ -3380,7 +3318,7 @@ function exportExcel(){
   // KUZU SEKMESİ
   const kuzuRows = getRows('kuzu');
   if(kuzuRows.length >= 0){
-    const ws = makeSheet(`KUZU LİSTE - ${sezonAd}`,
+    const ws = makeSheet('KUZU LISTE - ' + sezonAd,
       ['KULAK NO','AD-SOYAD','KG','CİNSİ','KG FİYATI','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
       kuzuRows.map((r,i)=>[
         r.kupe||'', r.ad||'', r.kg||'', 'kuzu', r.kgFiyat||'',
@@ -3395,7 +3333,7 @@ function exportExcel(){
   // KOYUN SEKMESİ
   const koyunRows = getRows('koyun');
   if(koyunRows.length >= 0){
-    const ws = makeSheet(`KOYUN LİSTE - ${sezonAd}`,
+    const ws = makeSheet('KOYUN LISTE - ' + sezonAd,
       ['KULAK NO','AD-SOYAD','KG','CİNSİ','KG FİYATI','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
       koyunRows.map(r=>[
         r.kupe||'', r.ad||'', r.kg||'', 'koyun', r.kgFiyat||'',
@@ -3410,7 +3348,7 @@ function exportExcel(){
   // DANA SEKMESİ
   const danaRows = getRows('dana');
   if(danaRows.length >= 0){
-    const ws = makeSheet(`DANA LİSTE - ${sezonAd}`,
+    const ws = makeSheet('DANA LISTE - ' + sezonAd,
       ['SIRA NO','KULAK NO','İSİM','KG','KG FİYAT','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
       danaRows.map(r=>[
         r.sira||'', r.kupe||'', r.ad||'', r.kg||'', r.kgFiyat||'',
@@ -3425,7 +3363,7 @@ function exportExcel(){
   // DÜVE SEKMESİ
   const duveRows = getRows('duve');
   if(duveRows.length >= 0){
-    const ws = makeSheet(`DÜVE LİSTE - ${sezonAd}`,
+    const ws = makeSheet('DUVE LISTE - ' + sezonAd,
       ['SIRA NO','KULAK NO','İSİM','KG','KG FİYAT','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
       duveRows.map(r=>[
         r.sira||'', r.kupe||'', r.ad||'', r.kg||'', r.kgFiyat||'',
@@ -3440,7 +3378,7 @@ function exportExcel(){
   // KOÇ SEKMESİ
   const kocRows = getRows('koc');
   if(kocRows.length >= 0){
-    const ws = makeSheet(`KOÇ LİSTE - ${sezonAd}`,
+    const ws = makeSheet('KOC LISTE - ' + sezonAd,
       ['SIRA NO','KULAK NO','İSİM','KG','KG FİYAT','TUTARI','KAPARO','VERİLEN','KALAN','AÇIKLAMA','TELEFON'],
       kocRows.map(r=>[
         r.sira||'', r.kupe||'', r.ad||'', r.kg||'', r.kgFiyat||'',
@@ -3482,9 +3420,11 @@ function exportExcel(){
   // Dosyayı indir
   const isletmeler = ls(LS_ISL)||[];
   const isl = isletmeler.find(i=>i.id===activeIsletmeId);
-  const fileName = `${isl?isl.ad:'Kayitlar'}_${sezonAd}_${new Date().toLocaleDateString('tr-TR').replace(/\./g,'-')}.xlsx`;
+  var islName = (isletmeler.find(function(i){return i.id===activeIsletmeId;})||{}).ad||'Kayitlar';
+  var tarih = new Date().toLocaleDateString('tr-TR').split('.').join('-');
+  var fileName = islName + '_' + sezonAd + '_' + tarih + '.xlsx';
   XLSX.writeFile(wb, fileName);
-  toast(`📊 "${fileName}" indirildi`,'ok');
+  toast(fileName + ' indirildi','ok');
   document.getElementById('emenu').classList.remove('open');
 }
 
