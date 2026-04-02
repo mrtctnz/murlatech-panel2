@@ -532,7 +532,11 @@ select.fi option{background:var(--surface2)}
   <div class="modal" style="width:420px">
     <div class="mtitle" id="hTitle">🏷️ Hayvan Kaydı</div>
     <div class="fgrid">
-      <div class="fg full"><div class="fl">Küpe No *</div><input class="fi" id="h_kupe" placeholder="MarDü26003"></div>
+      <div class="fg full">
+        <div class="fl">Küpe No *</div>
+        <input class="fi" id="h_kupe" placeholder="MarDü26003">
+        <div id="h_kupeHint" style="font-size:11px;color:var(--accent);margin-top:4px"></div>
+      </div>
       <div class="fg"><div class="fl">Hayvan İsmi / No</div><input class="fi" id="h_isim" placeholder="Sarıkız, Dana-07..."></div>
       <div class="fg"><div class="fl">Hayvan Türü *</div>
         <select class="fi" id="h_type">
@@ -606,6 +610,7 @@ select.fi option{background:var(--surface2)}
     <div class="hd-sahipler" id="hd-sahipler"></div>
     <div class="hd-footer">
       <button class="btn btn-secondary" onclick="closeHd()">Kapat</button>
+      <button class="btn btn-secondary" style="color:var(--red);border-color:var(--red)" onclick="silHayvan(curHdKupe)">🗑️ Hayvanı Sil</button>
       <button class="btn btn-primary" id="hd-add-btn">➕ Bu Hayvana Müşteri Ekle</button>
     </div>
   </div>
@@ -1098,8 +1103,27 @@ async function updatePendingBadge(){
   if(!idb) return;
   const n=await new Promise(res=>{ const tx=idb.transaction(IDB_STORE,'readonly'); const req=tx.objectStore(IDB_STORE).count(); req.onsuccess=()=>res(req.result); });
   const b=document.getElementById('pendingBadge');
-  if(n>0){b.textContent=`⏳ ${n} bekleyen`;b.classList.add('show');}
-  else b.classList.remove('show');
+  if(n>0){
+    b.textContent=`⏳ ${n} bekleyen — temizle`;
+    b.style.cursor='pointer';
+    b.onclick=async()=>{
+      if(!confirm(`${n} bekleyen işlem silinecek. (Zaten kaydedilmiş veriler etkilenmez) Emin misiniz?`)) return;
+      await temizleKuyruk();
+    };
+    b.classList.add('show');
+  } else {
+    b.classList.remove('show');
+  }
+}
+
+async function temizleKuyruk(){
+  if(!idb) await openIDB();
+  return new Promise((res,rej)=>{
+    const tx=idb.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).clear();
+    tx.oncomplete=()=>{ updatePendingBadge(); toast('✔ Kuyruk temizlendi','ok'); res(); };
+    tx.onerror=()=>rej(tx.error);
+  });
 }
 function showSync(state){ const b=document.getElementById('syncBar'); b.className='sync-bar '+state; }
 let isOnline=navigator.onLine;
@@ -1107,8 +1131,24 @@ window.addEventListener('online',()=>{ isOnline=true; document.getElementById('o
 window.addEventListener('offline',()=>{ isOnline=false; document.getElementById('offlineBadge').classList.add('show'); });
 
 async function dbUpsert(table,data){
-  if(isOnline){ showSync('syncing'); const {error}=await sb.from(table).upsert(data); if(error){showSync('err');await queueOp({table,action:'upsert',data});}else showSync('ok'); }
-  else{ await queueOp({table,action:'upsert',data}); updatePendingBadge(); }
+  // id undefined ise temizle — Supabase otomatik atar
+  const clean = {...data};
+  if(clean.id === undefined || clean.id === null || clean.id === '') delete clean.id;
+  if(isOnline){
+    showSync('syncing');
+    const {error}=await sb.from(table).upsert(clean);
+    if(error){
+      showSync('err');
+      console.error('Supabase upsert hatası:', table, error.message, clean);
+      toast(`⚠️ Sync hatası: ${error.message}`,'err');
+      await queueOp({table,action:'upsert',data:clean});
+    } else {
+      showSync('ok');
+    }
+  } else {
+    await queueOp({table,action:'upsert',data:clean});
+    updatePendingBadge();
+  }
 }
 async function dbDelete(table,id){
   if(isOnline){ showSync('syncing'); const {error}=await sb.from(table).delete().eq('id',id); if(error){showSync('err');await queueOp({table,action:'delete',data:{id}});}else showSync('ok'); }
@@ -1752,8 +1792,13 @@ async function silIsletme(islId){
   toast(`🗑️ "${esc(isl.ad)}" silindi`,'err');
 }
 
-// ══════════════════════════════════════════════════════
-// SEZON YÖNETİMİ
+// UUID üretici
+function genUUID(){
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0;
+    return (c==='x'?r:(r&0x3|0x8)).toString(16);
+  });
+}
 // ══════════════════════════════════════════════════════
 async function initSeasons(){
   if(isOnline&&activeIsletmeId){
@@ -1870,15 +1915,25 @@ async function loadFromSupabase(){
   }catch(e){showSync('err');console.error(e);}
 }
 async function syncSatis(row,type){
-  await dbUpsert('satislar',{id:row.id,isletme_id:activeIsletmeId,sezon_id:currentSeason,
-    tur:type,ad:row.ad,tel:row.tel||null,tc:row.tc||null,kupe:row.kupe||null,
-    pay_sayi:row.musteriPay||1,fiyat:row.fiyat||0,kapora:row.kapora||0,
-    notlar:row.notlar||null,sira:row.sira||0});
+  const payload = {
+    isletme_id:activeIsletmeId, sezon_id:currentSeason,
+    tur:type, ad:row.ad, tel:row.tel||null, tc:row.tc||null,
+    kupe:row.kupe||null, pay_sayi:row.musteriPay||1,
+    fiyat:row.fiyat||0, kapora:row.kapora||0,
+    notlar:row.notlar||null, sira:row.sira||0
+  };
+  if(row.id) payload.id = row.id;
+  await dbUpsert('satislar', payload);
 }
 async function syncHayvan(h){
-  await dbUpsert('hayvanlar',{id:h.id||undefined,isletme_id:activeIsletmeId,sezon_id:currentSeason,
-    kupe:h.kupe,isim:h.isim||null,tur:h.type||'dana',
-    toplam_pay:h.toplamPay||7,kesim_sirasi:h.sira||null,kesim_tarihi:h.kesimTarihi||null});
+  const payload = {
+    isletme_id:activeIsletmeId, sezon_id:currentSeason,
+    kupe:h.kupe, isim:h.isim||null, tur:h.type||'dana',
+    toplam_pay:h.toplamPay||7, kesim_sirasi:h.sira||null,
+    kesim_tarihi:h.kesimTarihi||null
+  };
+  if(h.id) payload.id = h.id;
+  await dbUpsert('hayvanlar', payload);
 }
 
 // ══════════════════════════════════════════════════════
@@ -1921,7 +1976,7 @@ async function saveM(){
     }
   } else {
     const rows=getRows(type);
-    const rec={id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),...obj,_t:type};
+    const rec={id:genUUID(),...obj,_t:type};
     rows.push(rec); setRows(type,rows);
     await syncSatis(rec,type);
   }
@@ -1939,9 +1994,22 @@ async function saveH(){
   if(!kupe){document.getElementById('h_kupe').focus();toast('Küpe No zorunlu!','err');return;}
   if(!toplamPay){document.getElementById('h_toplamPay').focus();toast('Toplam pay zorunlu!','err');return;}
   const sira=+document.getElementById('h_sira').value||0;
-  const existingSiras=Object.entries(getHD()).filter(([k])=>k!==kupe).map(([,h])=>h.sira||0).filter(Boolean);
+  const existingSiras=Object.entries(getHD()).filter(([k])=>k!==editHKupe&&k!==kupe).map(([,h])=>h.sira||0).filter(Boolean);
   const autoSira=sira||(existingSiras.length?Math.max(...existingSiras)+1:1);
-  const existing=getHav(kupe);
+  const existing=getHav(editHKupe||kupe);
+
+  // Küpe no değiştiyse eski kaydı sil, satışları güncelle
+  if(editHKupe && editHKupe !== kupe){
+    const hd=getHD(); delete hd[editHKupe]; setHD(hd);
+    if(existing?.id) await dbDelete('hayvanlar', existing.id);
+    TYPES.forEach(t=>{
+      const rows=getRows(t);
+      rows.forEach(r=>{if(r.kupe===editHKupe) r.kupe=kupe;});
+      setRows(t,rows);
+    });
+    toast(,'ok');
+  }
+
   const hayvanObj={kupe,isim:document.getElementById('h_isim').value.trim(),
     type:document.getElementById('h_type').value,toplamPay,sira:autoSira,
     kesimTarihi:document.getElementById('h_tarih').value||null,id:existing?.id};
@@ -1953,6 +2021,29 @@ async function saveH(){
   });
   await syncHayvan(hayvanObj);
   closeH(); renderAll(); toast('✔ Hayvan kaydedildi','ok');
+}
+
+async function silHayvan(kupe){
+  if(!kupe) return;
+  const h=getHav(kupe);
+  const owners=allRows().filter(r=>r.kupe===kupe);
+  const msg=owners.length
+    ? 
+    : ;
+  if(!confirm(msg)) return;
+  const hd=getHD(); delete hd[kupe]; setHD(hd);
+  if(h?.id) await dbDelete('hayvanlar', h.id);
+  if(owners.length){
+    TYPES.forEach(t=>{
+      const rows=getRows(t);
+      rows.forEach(r=>{if(r.kupe===kupe){r.kupe='';r.sira=0;}});
+      setRows(t,rows);
+    });
+    toast(,'err');
+  } else {
+    toast('🗑️ Hayvan silindi','err');
+  }
+  closeHd(); renderAll();
 }
 async function delM(id,type){
   if(!confirm('Bu kaydı silmek istiyor musunuz?'))return;
@@ -2361,14 +2452,15 @@ function openHModal(kupe=null){
   const h=kupe?getHav(kupe):null;
   document.getElementById('hTitle').textContent=kupe?'✏️ Hayvanı Düzenle':'🏷️ Hayvan Kaydı';
   document.getElementById('h_kupe').value=kupe||'';
-  document.getElementById('h_kupe').disabled=!!kupe;
+  document.getElementById('h_kupe').disabled=false; // Küpe no artık düzenlenebilir
+  document.getElementById('h_kupeHint').textContent = kupe ? '⚠️ Küpe no değiştirirsen eski kayıtlarla bağlantı kopar.' : '';
   document.getElementById('h_isim').value=h?.isim||'';
   document.getElementById('h_type').value=h?.type||'dana';
   document.getElementById('h_toplamPay').value=h?.toplamPay||'';
   document.getElementById('h_sira').value=h?.sira||'';
   document.getElementById('h_tarih').value=h?.kesimTarihi||'';
   document.getElementById('hOverlay').classList.add('open');
-  setTimeout(()=>document.getElementById(kupe?'h_isim':'h_kupe').focus(),80);
+  setTimeout(()=>document.getElementById('h_kupe').focus(),80);
 }
 function closeH(){ document.getElementById('hOverlay').classList.remove('open'); editHKupe=null; }
 function closeHBg(e){ if(e.target===document.getElementById('hOverlay')) closeH(); }
@@ -3617,7 +3709,7 @@ async function importKaydet(){
   for(const sheet of importParsedData){
     for(const row of sheet.rows){
       const tur = sheet.tur;
-      const id = Date.now().toString(36)+Math.random().toString(36).slice(2,5)+'_'+saved;
+      const id = genUUID();
       const obj = {
         id, ad:row.ad||'', tel:row.tel||'', tc:'',
         kupe:row.kupe||'', musteriPay:1, toplamPay:0, sira:row.sira||0,
