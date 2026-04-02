@@ -2008,7 +2008,7 @@ async function saveH(){
       rows.forEach(r=>{if(r.kupe===editHKupe) r.kupe=kupe;});
       setRows(t,rows);
     });
-    toast(`Kupe guncellendi: ${editHKupe} -> ${kupe}`,'ok');
+    toast('Kupe guncellendi','ok');
   }
 
   const hayvanObj={kupe,isim:document.getElementById('h_isim').value.trim(),
@@ -2028,21 +2028,24 @@ async function silHayvan(kupe){
   if(!kupe) return;
   const h=getHav(kupe);
   const owners=allRows().filter(r=>r.kupe===kupe);
-  const msg=owners.length
-    ? `"${kupe}" kupeli hayvan silinecek. ${owners.length} musteri kaydından kupe baglantisi kaldirilacak. Emin misiniz?`
-    : `"${kupe}" kupeli hayvan silinecek. Emin misiniz?`;
+  let msg;
+  if(owners.length){
+    msg = '"'+kupe+'" kupeli hayvan silinecek. '+owners.length+' musteri kaydından kupe baglantisi kaldirilacak. Emin misiniz?';
+  } else {
+    msg = '"'+kupe+'" kupeli hayvan silinecek. Emin misiniz?';
+  }
   if(!confirm(msg)) return;
   const hd=getHD(); delete hd[kupe]; setHD(hd);
-  if(h?.id) await dbDelete('hayvanlar', h.id);
+  if(h&&h.id) await dbDelete('hayvanlar', h.id);
   if(owners.length){
     TYPES.forEach(t=>{
       const rows=getRows(t);
       rows.forEach(r=>{if(r.kupe===kupe){r.kupe='';r.sira=0;}});
       setRows(t,rows);
     });
-    toast(`Hayvan silindi - ${owners.length} kayittan kupe baglantisi kaldirildi`,'err');
+    toast('Hayvan silindi - '+owners.length+' kayittan kupe baglantisi kaldirildi','err');
   } else {
-    toast('🗑️ Hayvan silindi','err');
+    toast('Hayvan silindi','err');
   }
   closeHd(); renderAll();
 }
