@@ -2124,27 +2124,66 @@ function updateArrows(){
   if(l) l.disabled=bar.scrollLeft<=0;
   if(r) r.disabled=bar.scrollLeft+bar.clientWidth>=bar.scrollWidth-2;
 }
+// Sekme sırası localStorage'dan yükle
+const TAB_ORDER_KEY = 'murt_tab_order';
+const DEFAULT_TAB_ORDER = ['genel','dana','duve','koc','koyun','kuzu','hayvanlar','musteri','kesim','finans','dashboard','hesap'];
+function getTabOrder(){
+  try{ const o=JSON.parse(localStorage.getItem(TAB_ORDER_KEY)); if(Array.isArray(o)&&o.length>5) return o; }catch{}
+  return [...DEFAULT_TAB_ORDER];
+}
+function setTabOrder(o){ localStorage.setItem(TAB_ORDER_KEY,JSON.stringify(o)); }
+
+const TAB_DEFS = {
+  genel:    d=> ({label:'🗂️ Genel', badge:TYPES.reduce((a,t)=>a+(d[t]||[]).length,0)}),
+  dana:     d=> ({label:'Dana 🐄', badge:(d['dana']||[]).length}),
+  duve:     d=> ({label:'Düve 🐮', badge:(d['duve']||[]).length}),
+  koc:      d=> ({label:'Koç 🐏', badge:(d['koc']||[]).length}),
+  koyun:    d=> ({label:'Koyun 🐑', badge:(d['koyun']||[]).length}),
+  kuzu:     d=> ({label:'Kuzu 🐑', badge:(d['kuzu']||[]).length}),
+  hayvanlar:d=> ({label:'🏷️ Hayvanlar', badge:Object.keys(getHD()).length, extra: allRows().filter(r=>!r.kupe).length>0?'<span style="color:var(--red);font-size:10px">⚠'+allRows().filter(r=>!r.kupe).length+'</span>':''}),
+  musteri:  d=> ({label:'👥 Rehber', badge:Object.keys(getDir()).length}),
+  kesim:    d=> ({label:'✂️ Kesim Planı', badge:null}),
+  finans:   d=> ({label:'💰 Finans', badge:null}),
+  dashboard:d=> ({label:'📊 İzleme', badge:null}),
+  hesap:    d=> ({label:'🧮 Hesap', badge:null}),
+};
+
+let dragSrcTab = null;
+
 function renderTabs(){
   const d=getMD();
-  const total=TYPES.reduce((a,t)=>a+(d[t]||[]).length,0);
-  const havSay=Object.keys(getHD()).length;
-  const noK=allRows().filter(r=>!r.kupe).length;
-  const warn=noK>0?` <span style="color:var(--red);font-size:10px">⚠${noK}</span>`:'';
-  const dirCount=Object.keys(getDir()).length;
-  document.getElementById('tabsBar').innerHTML=[
-    `<button class="tab-btn${activeTab==='genel'?' active':''}" data-t="genel" onclick="sw('genel')">🗂️ Genel <span class="tc">${total}</span></button>`,
-    ...TYPES.map(t=>`<button class="tab-btn${activeTab===t?' active':''}" data-t="${t}" onclick="sw('${t}')">${TLABEL[t]} <span class="tc">${(d[t]||[]).length}</span></button>`),
-    `<button class="tab-btn${activeTab==='hayvanlar'?' active':''}" data-t="hayvanlar" onclick="sw('hayvanlar')">🏷️ Hayvanlar <span class="tc">${havSay}</span>${warn}</button>`,
-    `<button class="tab-btn${activeTab==='musteri'?' active':''}" data-t="musteri" onclick="sw('musteri')">👥 Rehber <span class="tc">${dirCount}</span></button>`,
-    `<button class="tab-btn${activeTab==='kesim'?' active':''}" data-t="kesim" onclick="sw('kesim')">✂️ Kesim Planı</button>`,
-    `<button class="tab-btn${activeTab==='finans'?' active':''}" data-t="finans" onclick="sw('finans')">💰 Finans</button>`,
-    `<button class="tab-btn${activeTab==='dashboard'?' active':''}" data-t="dashboard" onclick="sw('dashboard')">📊 İzleme</button>`,
-    `<button class="tab-btn${activeTab==='hesap'?' active':''}" data-t="hesap" onclick="sw('hesap')">🧮 Hesap</button>`
-  ].join('');
+  const order=getTabOrder();
+  const bar=document.getElementById('tabsBar');
+  bar.innerHTML=order.map(t=>{
+    if(!TAB_DEFS[t]) return '';
+    const def=TAB_DEFS[t](d);
+    const badge=def.badge!==null&&def.badge!==undefined?`<span class="tc">${def.badge}</span>`:'';
+    const extra=def.extra||'';
+    const active=activeTab===t?' active':'';
+    return `<button class="tab-btn${active}" data-t="${t}" draggable="true"
+      onclick="sw('${t}')"
+      ondragstart="dragSrcTab='${t}';this.style.opacity='.4'"
+      ondragend="this.style.opacity='1';renderTabs()"
+      ondragover="event.preventDefault()"
+      ondrop="event.preventDefault();tabDropOn('${t}')"
+    >${def.label} ${badge}${extra}</button>`;
+  }).join('');
   const activeBtn=document.querySelector('.tab-btn.active');
   if(activeBtn) activeBtn.scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'});
   setTimeout(updateArrows,100);
 }
+
+function tabDropOn(targetT){
+  if(!dragSrcTab||dragSrcTab===targetT) return;
+  const order=getTabOrder();
+  const si=order.indexOf(dragSrcTab), ti=order.indexOf(targetT);
+  if(si<0||ti<0) return;
+  order.splice(si,1); order.splice(ti,0,dragSrcTab);
+  setTabOrder(order);
+  dragSrcTab=null;
+  renderTabs();
+}
+
 function sw(t){ activeTab=t; selRows.clear(); renderAll(); }
 
 // ══════════════════════════════════════════════════════
@@ -2762,6 +2801,204 @@ function closeMd(){ document.getElementById('mdOverlay').classList.remove('open'
 function closeMdBg(e){ if(e.target===document.getElementById('mdOverlay')) closeMd(); }
 
 // ── KESİM PLANI ──
+let _finansDateFilter = 'all';
+let _finansSearch = '';
+
+function setFinansDate(f){ _finansDateFilter=f; renderMain(); }
+function setFinansSearch(v){ _finansSearch=v; renderMain(); }
+
+function renderFinans(){
+  const qBase=sq();
+  const q=_finansSearch||qBase;
+  const arAll=allRows();
+  
+  // Tarih filtresi
+  const now=new Date();
+  const today=now.toISOString().slice(0,10);
+  const d7=new Date(now-7*864e5).toISOString().slice(0,10);
+  const d30=new Date(now-30*864e5).toISOString().slice(0,10);
+  const d365=new Date(now-365*864e5).toISOString().slice(0,10);
+  const yilbasi=now.getFullYear()+'-01-01';
+  const cutoffMap={today,week:d7,month:d30,yilbasi,year:d365};
+  const cutoff=cutoffMap[_finansDateFilter];
+  
+  const arDate=cutoff ? arAll.filter(r=>!r.createdAt||(r.createdAt.slice(0,10)>=cutoff)) : arAll;
+  const ar=q ? arDate.filter(r=>mq(r,q)) : arDate;
+  
+  const seasons=getSeasons(); const sezonAd=seasons[currentSeason]?.name||'—';
+  const totSatis=arDate.reduce((a,r)=>a+(r.fiyat||0),0);
+  const totKapora=arDate.reduce((a,r)=>a+(r.kapora||0),0);
+  const totKalan=totSatis-totKapora;
+  const odenmisSay=arDate.filter(r=>((r.fiyat||0)-(r.kapora||0))<=0).length;
+  const bekleyenSay=arDate.filter(r=>((r.fiyat||0)-(r.kapora||0))>0).length;
+  
+  // Tarih filtre butonları
+  const dateFilters=[
+    {k:'all',l:'Tümü'},
+    {k:'today',l:'Bugün'},
+    {k:'week',l:'Son 1 Hafta'},
+    {k:'month',l:'Son 1 Ay'},
+    {k:'yilbasi',l:'Yılbaşından'},
+    {k:'year',l:'Son 1 Yıl'},
+  ];
+  const dateFilterHtml=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;align-items:center">
+    <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-right:4px">Dönem:</span>
+    ${dateFilters.map(f=>`<button onclick="setFinansDate('${f.k}')"
+      style="padding:5px 12px;border-radius:20px;border:1px solid ${_finansDateFilter===f.k?'var(--accent)':'var(--border)'};
+      background:${_finansDateFilter===f.k?'rgba(232,160,32,.15)':'transparent'};
+      color:${_finansDateFilter===f.k?'var(--accent)':'var(--muted)'};
+      cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s">${f.l}</button>`).join('')}
+  </div>`;
+  
+  // Tür bazlı
+  const typeRows=TYPES.map(type=>{
+    const rows=arDate.filter(r=>r._t===type); if(!rows.length) return '';
+    const c=THEX[type];
+    const ts=rows.reduce((a,r)=>a+(r.fiyat||0),0);
+    const tk=rows.reduce((a,r)=>a+(r.kapora||0),0);
+    const tkl=ts-tk;
+    const pct=ts>0?Math.round(tk/ts*100):0;
+    
+    // Küpe bazlı detay
+    const hd=getHD();
+    const kupeMap={};
+    rows.forEach(r=>{
+      if(!r.kupe) return;
+      if(!kupeMap[r.kupe]) kupeMap[r.kupe]={kupe:r.kupe,isim:hd[r.kupe]?.isim||'',fiyat:0,kapora:0,count:0};
+      kupeMap[r.kupe].fiyat+=r.fiyat||0;
+      kupeMap[r.kupe].kapora+=r.kapora||0;
+      kupeMap[r.kupe].count++;
+    });
+    const kupeRows=Object.values(kupeMap).sort((a,b)=>(b.fiyat-b.kapora)-(a.fiyat-a.kapora));
+    const kupeHtml=kupeRows.length?`
+      <details style="margin-top:10px">
+        <summary style="font-size:11px;color:var(--muted);cursor:pointer;padding:4px 0">Küpe bazlı detay (${kupeRows.length} hayvan)</summary>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+          ${kupeRows.map(k=>{
+            const kl=k.fiyat-k.kapora; const p=k.fiyat>0?Math.round(k.kapora/k.fiyat*100):0;
+            return `<div style="display:flex;align-items:center;gap:10px;padding:5px 8px;background:var(--surface2);border-radius:6px;font-size:12px">
+              <span style="font-family:'Bebas Neue',sans-serif;font-size:14px;color:${c};min-width:90px">🏷️ ${esc(k.kupe)}</span>
+              ${k.isim?`<span style="color:var(--muted);min-width:80px">${esc(k.isim)}</span>`:''}
+              <span style="color:var(--muted)">${k.count} sahip</span>
+              <div style="flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${p}%;background:${c}"></div></div>
+              <span style="font-family:'IBM Plex Mono',monospace;color:${kl>0?'var(--red)':'var(--green)'};min-width:70px;text-align:right">₺${fmt(kl)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </details>`:'' ;
+    
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:13px 16px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;color:${c};width:110px">${TLABEL[type]}</div>
+        <div style="flex:1;min-width:180px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:5px"><span>Kapora tahsilatı</span><span style="font-family:'IBM Plex Mono',monospace">${pct}%</span></div>
+          <div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${c};border-radius:4px"></div></div>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <div style="text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Satış</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600">₺${fmt(ts)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Kapora</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:var(--accent)">₺${fmt(tk)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;color:${tkl>0?'var(--red)':'var(--green)'};text-transform:uppercase;letter-spacing:.8px">Kalan</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${tkl>0?'var(--red)':'var(--green)'}">₺${fmt(tkl)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Kayıt</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600">${rows.length}</div></div>
+        </div>
+      </div>
+      ${kupeHtml}
+    </div>`;
+  }).join('');
+  
+  const bekleyenRows=ar.filter(r=>((r.fiyat||0)-(r.kapora||0))>0).sort((a,b)=>((b.fiyat||0)-(b.kapora||0))-((a.fiyat||0)-(a.kapora||0)));
+  const odenenRows=ar.filter(r=>((r.fiyat||0)-(r.kapora||0))<=0);
+  
+  const bekleyenHtml=bekleyenRows.map((r,i)=>{
+    const kalan=(r.fiyat||0)-(r.kapora||0);
+    const pct=r.fiyat>0?Math.round((r.kapora||0)/r.fiyat*100):0;
+    const c=THEX[r._t]||'var(--accent)';
+    const hav=getHav(r.kupe);
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 14px;border-left:3px solid ${c}">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:7px">
+        <div>
+          <div style="font-size:14px;font-weight:600;cursor:pointer;color:var(--blue)" onclick="openMdByRow('${esc(r.ad)}','${esc(r.tel||'')}','${esc(r.tc||'')}')">${esc(r.ad||'—')}</div>
+          <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:2px">
+            ${r.tel||''} ${r.kupe?`· 🏷️ ${esc(r.kupe)}`:''}${hav?.isim?` · ${esc(hav.isim)}`:''}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="text-align:right">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:var(--red)">₺${fmt(kalan)}</div>
+            <div style="font-size:10px;color:var(--muted)">Satış: ₺${fmt(r.fiyat||0)}</div>
+          </div>
+          ${kalan>0?`<button onclick="openOdeme('${r.id}','${r._t||'dana'}')"
+            style="background:rgba(64,200,112,.15);color:var(--green);border:1px solid var(--green);border-radius:5px;padding:6px 12px;cursor:pointer;font-size:12px;font-family:inherit;white-space:nowrap">💰 Ödeme Al</button>`:''}
+        </div>
+      </div>
+      <div style="height:5px;background:var(--surface2);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${c};border-radius:3px"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px">
+        <span>Ödendi: ₺${fmt(r.kapora||0)} (%${pct})</span>
+        <span style="color:var(--red)">Kalan: ₺${fmt(kalan)}</span>
+      </div>
+    </div>`;
+  }).join('');
+  
+  const odenenHtml=odenenRows.slice(0,20).map(r=>{
+    const c=THEX[r._t]||'var(--accent)';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--surface);border:1px solid var(--border);border-radius:7px;border-left:3px solid ${c}">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:500;cursor:pointer;color:var(--blue)" onclick="openMdByRow('${esc(r.ad)}','${esc(r.tel||'')}','${esc(r.tc||'')}')">${esc(r.ad||'—')}</div>
+        <div style="font-size:10px;color:var(--muted)">${r.tel||''} ${r.kupe?'· 🏷️ '+esc(r.kupe):''}</div>
+      </div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--green)">✓ ₺${fmt(r.fiyat||0)}</div>
+    </div>`;
+  }).join('');
+  
+  document.getElementById('mc').innerHTML=`<div style="padding:14px;max-width:900px">
+    ${dateFilterHtml}
+    
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;text-align:center">
+        <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Toplam Satış</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700">₺${fmt(totSatis)}</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;text-align:center">
+        <div style="font-size:9px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Tahsil Edilen</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:var(--accent)">₺${fmt(totKapora)}</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid ${totKalan>0?'rgba(232,80,80,.3)':'rgba(64,200,112,.3)'};border-radius:8px;padding:12px 14px;text-align:center">
+        <div style="font-size:9px;color:${totKalan>0?'var(--red)':'var(--green)'};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Kalan Borç</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:${totKalan>0?'var(--red)':'var(--green)'}">₺${fmt(totKalan)}</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;text-align:center">
+        <div style="font-size:9px;color:var(--green);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Tahsilat</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:var(--green)">${odenmisSay} kişi</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid rgba(232,80,80,.3);border-radius:8px;padding:12px 14px;text-align:center">
+        <div style="font-size:9px;color:var(--red);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Bekleyen</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:var(--red)">${bekleyenSay} kişi</div>
+      </div>
+    </div>
+    
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Tür Bazlı Durum</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">${typeRows||'<div style="color:var(--muted);padding:10px">Kayıt yok.</div>'}</div>
+    
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div style="font-size:11px;color:var(--red);text-transform:uppercase;letter-spacing:1px">Bekleyen Ödemeler (${bekleyenRows.length})</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="text" placeholder="Kişi ara..." value="${esc(_finansSearch)}"
+          oninput="setFinansSearch(this.value)"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;font-family:inherit;outline:none;width:180px">
+        ${_finansSearch?`<button onclick="setFinansSearch('')" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:16px">✕</button>`:''}
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">${bekleyenHtml||'<div style="color:var(--green);padding:10px;text-align:center">Bekleyen ödeme yok!</div>'}</div>
+    
+    ${odenenRows.length?`
+    <div style="font-size:11px;color:var(--green);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Tamamlanan (${odenenRows.length})</div>
+    <div style="display:flex;flex-direction:column;gap:6px">${odenenHtml}
+      ${odenenRows.length>20?`<div style="text-align:center;font-size:12px;color:var(--muted);padding:8px">...ve ${odenenRows.length-20} kişi daha</div>`:''}
+    </div>`:''}
+  </div>`;
+}
+
 function renderKesimPlani(){
   const mc=document.getElementById('mc'); const hd=getHD(); const ar=allRows();
   const allDates=[...new Set(Object.values(hd).map(h=>h.kesimTarihi).filter(Boolean))].sort();
@@ -2771,642 +3008,12 @@ function renderKesimPlani(){
   const dayLabel=dateObj?`${dayNames[dateObj.getDay()]}, ${dateObj.toLocaleDateString('tr-TR',{day:'2-digit',month:'long',year:'numeric'})}`:' ';
   const animalsToday=Object.values(hd).filter(h=>h.kesimTarihi===selDate);
   const ownersToday=animalsToday.flatMap(h=>ar.filter(r=>r.kupe===h.kupe));
-  const totSatis=ownersToday.reduce((a,r)=>a+(r.fiyat||0),0);
-  const totKapora=ownersToday.reduce((a,r)=>a+(r.kapora||0),0);
-  const totKalan=totSatis-totKapora;
   const totPay=animalsToday.reduce((a,h)=>a+(h.toplamPay||0),0);
   const summaryHtml=animalsToday.length?`<div class="kesim-summary">
     <div class="ksump"><div class="ksump-lbl">Hayvan Sayısı</div><div class="ksump-val">${animalsToday.length}</div></div>
     <div class="ksump"><div class="ksump-lbl">Toplam Pay</div><div class="ksump-val">${totPay}</div></div>
     <div class="ksump"><div class="ksump-lbl">Sahip Sayısı</div><div class="ksump-val">${ownersToday.length}</div></div>
-    <div class="ksump"><div class="ksump-lbl">Toplam Satış</div><div class="ksump-val">₺${fmt(totSatis)}</div></div>
-    <div class="ksump"><div class="ksump-lbl">Toplam Kapora</div><div class="ksump-val">₺${fmt(totKapora)}</div></div>
-    <div class="ksump"><div class="ksump-lbl" style="color:${totKalan>0?'var(--red)':'var(--green)'}">Kalan</div><div class="ksump-val" style="color:${totKalan>0?'var(--red)':'var(--green)'}">₺${fmt(totKalan)}</div></div>
-  </div>`:'';
-  const byType={}; TYPES.forEach(t=>{ byType[t]=animalsToday.filter(h=>h.type===t).sort((a,b)=>(a.sira||999)-(b.sira||999)); });
-  const blocks=TYPES.map(type=>{
-    const animals=byType[type]; if(!animals.length) return '';
-    const c=THEX[type]; const emoji=TEMOJI[type];
-    const typeTotS=animals.flatMap(h=>ar.filter(r=>r.kupe===h.kupe)).reduce((a,r)=>a+(r.fiyat||0),0);
-    const typeTotKl=animals.flatMap(h=>ar.filter(r=>r.kupe===h.kupe)).reduce((a,r)=>a+((r.fiyat||0)-(r.kapora||0)),0);
-    const animalCards=animals.map(h=>{
-      const owners=ar.filter(r=>r.kupe===h.kupe).sort((a,b)=>(a.musteriPay||1)-(b.musteriPay||1));
-      const dolu=owners.reduce((a,r)=>a+(r.musteriPay||1),0);
-      const bos=Math.max(0,(h.toplamPay||0)-dolu);
-      let payBar='';
-      owners.forEach((r,i)=>{ const s=r.musteriPay||1; for(let j=0;j<s;j++) payBar+=`<div style="background:${SCOLS[i%SCOLS.length]};flex:1"></div>`; });
-      for(let i=0;i<bos;i++) payBar+=`<div style="background:var(--border);flex:1"></div>`;
-      const ownerChips=owners.map((r,i)=>{
-        const kalan=(r.fiyat||0)-(r.kapora||0); const kc=kcls(kalan,r.fiyat);
-        const pt=payStr(r); const sc=SCOLS[i%SCOLS.length];
-        return `<div class="ko-chip" style="border-left-color:${sc}">
-          <div class="ko-ad">
-            <span style="width:8px;height:8px;border-radius:50%;background:${sc};display:inline-block;flex-shrink:0"></span>
-            ${esc(r.ad||'—')} ${pt?`<span class="pay-chip" style="font-size:9px">${pt}</span>`:''}
-            ${r.tc?`<span class="tc-badge valid" style="font-size:9px">🪪 ${r.tc.slice(0,3)}***${r.tc.slice(-2)}</span>`:''}
-          </div>
-          ${r.tel?`<div class="ko-tel">${r.tel}</div>`:''}
-          <div class="ko-fin">
-            <span>Satış: <b style="color:var(--text)">₺${fmt(r.fiyat||0)}</b></span>
-            <span>Kapora: <b style="color:var(--accent)">₺${fmt(r.kapora||0)}</b></span>
-            <span>Kalan: <b><span class="kb ${kc}" style="padding:1px 5px;font-size:10px">₺${fmt(kalan)}</span></b></span>
-          </div>
-        </div>`;
-      }).join('');
-      return `<div class="kacard">
-        <div class="kacard-top">
-          <span class="ka-sira">${h.sira?`#${h.sira}`:'Sıra ?'}</span>
-          <span class="ka-kupe" onclick="openHd('${esc(h.kupe)}')">🏷️ ${esc(h.kupe)}</span>
-          ${h.isim?`<span class="ka-isim">${esc(h.isim)}</span>`:''}
-          <span style="font-size:12px;color:var(--muted);font-family:'IBM Plex Mono',monospace">${dolu}/${h.toplamPay||'?'} pay</span>
-          ${bos>0?`<span style="font-size:11px;color:var(--red);font-family:'IBM Plex Mono',monospace">${bos} boş pay!</span>`:'<span style="font-size:11px;color:var(--green)">✔ Tam</span>'}
-        </div>
-        <div class="ka-pay-bar">${payBar}</div>
-        <div class="ko-grid">${ownerChips||'<div style="font-size:12px;color:var(--muted)">Sahip yok</div>'}</div>
-      </div>`;
-    }).join('');
-    return `<div class="ktblock">
-      <div class="kthdr">
-        <span style="font-size:22px">${emoji}</span>
-        <span class="ktitle" style="color:${c}">${TLABEL[type]}</span>
-        <span class="ktcount">${animals.length} hayvan · ${animals.flatMap(h=>ar.filter(r=>r.kupe===h.kupe)).length} sahip</span>
-        <span class="kttotals">Satış: ₺${fmt(typeTotS)} · Kalan: <b style="color:${typeTotKl>0?'var(--red)':'var(--green)'}">₺${fmt(typeTotKl)}</b></span>
-      </div>
-      ${animalCards}
-    </div>`;
-  }).join('');
-  const upcomingHtml=allDates.length?`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-top:14px">
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:9px">Tüm Kesim Tarihleri</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">
-      ${allDates.map(d=>{
-        const cnt=Object.values(hd).filter(h=>h.kesimTarihi===d).length;
-        const isSelected=d===selDate;
-        const diff=Math.ceil((new Date(d+' 12:00')-new Date())/(864e5));
-        const isPast=diff<0; const isToday=diff===0;
-        return `<button onclick="setKesimDate('${d}')"
-          style="padding:5px 11px;border-radius:5px;border:1px solid ${isSelected?'#ff6b35':'var(--border)'};
-          background:${isSelected?'rgba(255,107,53,.2)':isPast?'rgba(42,48,80,.4)':'var(--surface2)'};
-          color:${isSelected?'#ff6b35':isPast?'var(--muted)':'var(--text)'};
-          font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;transition:all .15s;opacity:${isPast?.65:1}">
-          ${new Date(d+' 12:00').toLocaleDateString('tr-TR',{day:'2-digit',month:'short'})}
-          ${isToday?'🔴':''}
-          <span style="color:var(--teal);margin-left:3px">${cnt}</span>
-        </button>`;
-      }).join('')}
-    </div>
-  </div>`:'';
-  const mainContent=animalsToday.length
-    ?`${summaryHtml}${blocks}`
-    :`<div class="kesim-empty"><div class="ik">✂️</div><p style="font-size:14px;margin-bottom:8px">Bu tarihte kesim planlanmamış</p><p style="font-size:12px">Hayvan eklerken kesim tarihi girin.</p></div>`;
-  mc.innerHTML=`<div class="kesim-wrap">
-    <div class="kesim-header">
-      <button class="kesim-nav-btn" onclick="shiftKesimDate(-1)">◀</button>
-      <input type="date" class="kesim-date-input" value="${selDate}" onchange="setKesimDate(this.value)">
-      <button class="kesim-nav-btn" onclick="shiftKesimDate(1)">▶</button>
-      <span class="kesim-day-label">${dayLabel}</span>
-      <button class="kesim-nav-btn" onclick="setKesimDate(new Date().toISOString().slice(0,10))" style="font-size:12px;padding:5px 10px">Bugün</button>
-      ${animalsToday.length?`<button onclick="window.print()" style="margin-left:auto;background:rgba(255,107,53,.15);color:#ff6b35;border:1px solid rgba(255,107,53,.4);border-radius:5px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:500"
-        onmouseover="this.style.background='#ff6b35';this.style.color='#fff'" onmouseout="this.style.background='rgba(255,107,53,.15)';this.style.color='#ff6b35'">🖨️ İş Emri Yazdır</button>`:''}
-    </div>
-    ${mainContent}
-    ${upcomingHtml}
-  </div>`;
-}
-function setKesimDate(d){ kesimDate=d; if(activeTab==='kesim') renderMain(); }
-function shiftKesimDate(dir){ const d=new Date(kesimDate+' 12:00'); d.setDate(d.getDate()+dir); kesimDate=d.toISOString().slice(0,10); if(activeTab==='kesim') renderMain(); }
-
-// ── FİNANS ──
-function renderFinans(){
-  const q=sq(); // FIX: apply search
-  const arAll=allRows();
-  const ar=q ? arAll.filter(r=>mq(r,q)||(r.odemeler||[]).some(o=>(o.not||'').toLowerCase().includes(q))) : arAll;
-  const seasons=getSeasons(); const sezonAd=seasons[currentSeason]?.name||'—';
-  // Stats always from full data, not filtered
-  const totSatis=arAll.reduce((a,r)=>a+(r.fiyat||0),0);
-  const totKapora=arAll.reduce((a,r)=>a+(r.kapora||0),0);
-  const totKalan=totSatis-totKapora;
-  const odenmisSay=arAll.filter(r=>((r.fiyat||0)-(r.kapora||0))<=0).length;
-  const bekleyenSay=arAll.filter(r=>((r.fiyat||0)-(r.kapora||0))>0).length;
-  const typeRows=q ? '' : TYPES.map(type=>{  // hide type breakdown when searching
-    const rows=getRows(type); if(!rows.length) return '';
-    const c=THEX[type]; const ts=rows.reduce((a,r)=>a+(r.fiyat||0),0);
-    const tk=rows.reduce((a,r)=>a+(r.kapora||0),0); const tkl=ts-tk;
-    const pct=ts>0?Math.round(tk/ts*100):0;
-    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:13px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-      <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;color:${c};width:110px">${TLABEL[type]}</div>
-      <div style="flex:1;min-width:180px">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:5px"><span>Kapora tahsilatı</span><span style="font-family:'IBM Plex Mono',monospace">${pct}%</span></div>
-        <div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${c};border-radius:4px"></div></div>
-      </div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <div style="text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Satış</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600">₺${fmt(ts)}</div></div>
-        <div style="text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Kapora</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:var(--accent)">₺${fmt(tk)}</div></div>
-        <div style="text-align:center"><div style="font-size:9px;color:${tkl>0?'var(--red)':'var(--green)'};text-transform:uppercase;letter-spacing:.8px">Kalan</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${tkl>0?'var(--red)':'var(--green)'}">₺${fmt(tkl)}</div></div>
-        <div style="text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Kayıt</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600">${rows.length}</div></div>
-      </div>
-    </div>`;
-  }).join('');
-  const bekleyenRows=ar.filter(r=>((r.fiyat||0)-(r.kapora||0))>0).sort((a,b)=>((b.fiyat||0)-(b.kapora||0))-((a.fiyat||0)-(a.kapora||0)));
-  const odenenRows=ar.filter(r=>((r.fiyat||0)-(r.kapora||0))<=0);
-  const bekleyenHtml=bekleyenRows.map((r,i)=>{
-    const kalan=(r.fiyat||0)-(r.kapora||0); const pct=r.fiyat>0?Math.round((r.kapora||0)/r.fiyat*100):0;
-    const c=THEX[r._t]||'var(--accent)'; const hav=getHav(r.kupe);
-    // Payment log rows
-    const odHtml=(r.odemeler||[]).map(o=>`
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 8px;background:rgba(64,200,112,.06);border-radius:4px;margin-top:3px;font-size:10px;font-family:'IBM Plex Mono',monospace">
-        <span style="color:var(--muted)">${o.tarih||''}</span>
-        <span style="color:var(--green);font-weight:600">+₺${fmt(o.tutar)}</span>
-        ${o.not?`<span style="color:var(--muted)">${esc(o.not)}</span>`:''}
-        ${o.by?`<span style="color:var(--muted)">${esc(o.by)}</span>`:''}
-      </div>`).join('');
-    return `<tr style="${i%2===0?'':'background:rgba(42,48,80,.3)'}">
-      <td style="padding:7px 10px;font-weight:500;cursor:pointer;color:var(--blue)" onclick="openMdByRow('${esc(r.ad)}','${esc(r.tel||'')}','${esc(r.tc||'')}')">${esc(r.ad||'—')}</td>
-      <td style="padding:7px 10px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)">${r.tel||'—'}</td>
-      <td style="padding:7px 10px"><span style="font-size:11px;color:${c}">${TLABEL[r._t]||''}</span>${r.kupe?`<br><span class="klink" onclick="openHd('${esc(r.kupe)}')" style="font-size:10px;margin-top:2px">🏷️ ${esc(r.kupe)}</span>${hav?.sira?`<span style="font-size:10px;color:#ff6b35;margin-left:4px">#${hav.sira}</span>`:''}`:''}${hav?.kesimTarihi?`<br><span style="font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace">✂️ ${new Date(hav.kesimTarihi+' 12:00').toLocaleDateString('tr-TR')}</span>`:''}</td>
-      <td style="padding:7px 10px;font-family:'IBM Plex Mono',monospace;font-size:12px">₺${fmt(r.fiyat||0)}</td>
-      <td style="padding:7px 10px">
-        <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent)">₺${fmt(r.kapora||0)}</span>
-        ${odHtml}
-      </td>
-      <td style="padding:7px 10px">
-        <span class="kb cok" style="font-size:11px">₺${fmt(kalan)}</span>
-        <div style="height:4px;background:var(--surface2);border-radius:2px;margin-top:4px;width:80px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:2px"></div></div>
-        <span style="font-size:9px;color:var(--muted)">${pct}% ödendi</span>
-      </td>
-      <td style="padding:7px 10px;white-space:nowrap">
-        <button onclick="openOdeme('${r.id}','${r._t}')"
-          style="background:rgba(64,200,112,.15);color:var(--green);border:1px solid var(--green);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;font-family:inherit;font-weight:600;margin-bottom:4px;display:block;width:100%"
-          onmouseover="this.style.background='var(--green)';this.style.color='#0f1117'"
-          onmouseout="this.style.background='rgba(64,200,112,.15)';this.style.color='var(--green)'">💰 Ödeme Al</button>
-        <button onclick="editM('${r.id}')"
-          style="background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;font-family:inherit;display:block;width:100%">✏️ Düzenle</button>
-      </td>
-    </tr>`;
-  }).join('');
-  document.getElementById('mc').innerHTML=`<div style="padding:14px">
-    ${q?`<div style="background:rgba(64,200,200,.08);border:1px solid rgba(64,200,200,.3);border-radius:6px;padding:8px 13px;margin-bottom:12px;font-size:12px;color:var(--teal)">🔍 "<b>${esc(q)}</b>" için ${bekleyenRows.length+odenenRows.length} sonuç — bekleyen ve tamamlananlar gösteriliyor</div>`:''}
-    ${!q?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:16px">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-        <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">Toplam Satış</div>
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:2px;color:#a0e840">₺${fmt(totSatis)}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:2px">${arAll.length} kayıt · ${esc(sezonAd)}</div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-        <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">Toplam Kapora</div>
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:2px;color:var(--accent)">₺${fmt(totKapora)}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:2px">${totSatis>0?Math.round(totKapora/totSatis*100):0}% tahsil edildi</div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-        <div style="font-size:9px;color:${totKalan>0?'var(--red)':'var(--green)'};text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">Toplam Kalan</div>
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:2px;color:${totKalan>0?'var(--red)':'var(--green)'}">₺${fmt(totKalan)}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:2px">${bekleyenSay} kişide bekliyor</div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-        <div style="font-size:9px;color:var(--green);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">Tamamlanan</div>
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:2px;color:var(--green)">${odenmisSay}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:2px">kişi tam ödedi</div>
-      </div>
-    </div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Genel Tahsilat Durumu</span>
-        <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--accent)">${totSatis>0?Math.round(totKapora/totSatis*100):0}%</span>
-      </div>
-      <div style="height:10px;background:var(--surface2);border-radius:5px;overflow:hidden">
-        <div style="height:100%;width:${totSatis>0?Math.round(totKapora/totSatis*100):0}%;background:linear-gradient(90deg,var(--accent),#a0e840);border-radius:5px"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:5px">
-        <span>₺0</span><span style="color:var(--accent)">Kapora: ₺${fmt(totKapora)}</span><span>₺${fmt(totSatis)}</span>
-      </div>
-    </div>
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Tür Bazlı Durum</div>
-    <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px">${typeRows||'<div style="color:var(--muted);font-size:13px;padding:14px">Kayıt yok.</div>'}</div>`:''}
-    ${bekleyenRows.length?`
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">
-      Bekleyen Ödemeler <span style="font-family:'IBM Plex Mono',monospace;color:var(--red);margin-left:6px">${bekleyenRows.length} kişi · ₺${fmt(bekleyenRows.reduce((a,r)=>a+((r.fiyat||0)-(r.kapora||0)),0))}</span>
-    </div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px">
-      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:var(--surface2)">
-          ${['Ad Soyad','Telefon','Hayvan / Kesim','Satış','Kapora / Ödemeler','Kalan',''].map(h=>`<th style="padding:8px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);border-bottom:1px solid var(--border)">${h}</th>`).join('')}
-        </tr></thead>
-        <tbody>${bekleyenHtml}</tbody>
-      </table></div>
-    </div>`:''}
-    ${odenenRows.length?`
-    <details ${q?'open':''} style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">
-      <summary style="padding:12px 16px;cursor:pointer;font-size:12px;color:var(--green);font-weight:500;user-select:none">
-        ✅ Ödemesi Tamamlananlar <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);margin-left:6px">${odenenRows.length} kişi · ₺${fmt(odenenRows.reduce((a,r)=>a+(r.fiyat||0),0))}</span>
-      </summary>
-      <div style="padding:0 16px 14px;display:flex;flex-direction:column;gap:5px;margin-top:8px">
-        ${odenenRows.map(r=>{
-          const c=THEX[r._t]||'var(--accent)';
-          const odLog=(r.odemeler||[]).map(o=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--green)">+₺${fmt(o.tutar)} ${o.tarih||''}</span>`).join(' · ');
-          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:rgba(64,200,112,.06);border:1px solid rgba(64,200,112,.2);border-radius:5px;flex-wrap:wrap;gap:6px">
-            <div>
-              <span style="font-weight:500;font-size:13px">${esc(r.ad||'—')}</span>
-              <span style="font-size:11px;color:${c};margin-left:8px">${TLABEL[r._t]||''}</span>
-              ${r.kupe?`<span class="klink" onclick="openHd('${esc(r.kupe)}')" style="font-size:10px;margin-left:5px">🏷️ ${esc(r.kupe)}</span>`:''}
-              ${odLog?`<div style="margin-top:3px">${odLog}</div>`:''}
-            </div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">₺${fmt(r.fiyat||0)}</span>
-              <span class="kb odendi" style="font-size:11px">✔ Tam Ödendi</span>
-              <button onclick="editM('${r.id}')" style="background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:2px 7px;cursor:pointer;font-size:11px;font-family:inherit">✏️</button>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-    </details>`:''}
-  </div>`;
-}
-
-// ══════════════════════════════════════════════════════
-// DASHBOARD / İZLEME
-// ══════════════════════════════════════════════════════
-function renderDashboard(){
-  const hd=getHD(); const ar=allRows();
-  const now=new Date(); const todayStr=now.toISOString().slice(0,10);
-  const sezonAd=getSeasons()[currentSeason]?.name||'';
-
-  // Per-animal status calculation
-  // Status logic:
-  //   🔴 BAŞLAMADI  : hayvan tanımlı, hiç sahip yok
-  //   🟡 DEVAM EDİYOR : sahip var, bazı ödemeler eksik
-  //   🟠 UYARI      : pay dolu değil (boş pay var)
-  //   🟢 TAMAMLANDI : tüm sahiplerin ödemesi tamam AND pay doluluk tam
-  //   ⚫ KESİLDİ    : kesim tarihi geçmiş
-
-  const animals=Object.values(hd).sort((a,b)=>(a.sira||999)-(b.sira||999));
-
-  // Summary
-  const statCounts={tamamlandi:0,devam:0,baslamadi:0,uyari:0,kesildi:0};
-  animals.forEach(h=>{
-    const owners=ar.filter(r=>r.kupe===h.kupe);
-    const dolu=owners.reduce((a,r)=>a+(r.musteriPay||1),0);
-    const payTam=h.toplamPay&&dolu>=h.toplamPay;
-    const odemeTam=owners.length>0&&owners.every(r=>((r.fiyat||0)-(r.kapora||0))<=0);
-    const kesimGecti=h.kesimTarihi&&h.kesimTarihi<todayStr;
-    if(kesimGecti) statCounts.kesildi++;
-    else if(owners.length===0) statCounts.baslamadi++;
-    else if(!payTam) statCounts.uyari++;
-    else if(odemeTam) statCounts.tamamlandi++;
-    else statCounts.devam++;
-  });
-
-  const totalKalan=ar.reduce((a,r)=>a+((r.fiyat||0)-(r.kapora||0)),0);
-  const totalSatis=ar.reduce((a,r)=>a+(r.fiyat||0),0);
-  const pctTahsilat=totalSatis>0?Math.round((totalSatis-totalKalan)/totalSatis*100):0;
-
-  const summaryHtml=`<div class="db-summary-grid">
-    <div class="db-sum" style="border-color:rgba(192,132,252,.3)"><div class="db-sum-lbl">Toplam Hayvan</div><div class="db-sum-val" style="color:#c084fc">${animals.length}</div></div>
-    <div class="db-sum" style="border-color:rgba(64,200,112,.3)"><div class="db-sum-lbl">✅ Tamamlandı</div><div class="db-sum-val" style="color:var(--green)">${statCounts.tamamlandi}</div></div>
-    <div class="db-sum" style="border-color:rgba(232,160,32,.3)"><div class="db-sum-lbl">🔄 Devam Ediyor</div><div class="db-sum-val" style="color:var(--accent)">${statCounts.devam}</div></div>
-    <div class="db-sum" style="border-color:rgba(255,107,53,.3)"><div class="db-sum-lbl">⚠️ Boş Pay</div><div class="db-sum-val" style="color:#ff6b35">${statCounts.uyari}</div></div>
-    <div class="db-sum" style="border-color:rgba(232,80,80,.3)"><div class="db-sum-lbl">🔴 Başlamadı</div><div class="db-sum-val" style="color:var(--red)">${statCounts.baslamadi}</div></div>
-    <div class="db-sum" style="border-color:rgba(100,100,120,.3)"><div class="db-sum-lbl">✂️ Kesildi</div><div class="db-sum-val" style="color:var(--muted)">${statCounts.kesildi}</div></div>
-    <div class="db-sum" style="border-color:rgba(160,232,64,.3)"><div class="db-sum-lbl">Tahsilat</div><div class="db-sum-val" style="color:#a0e840">${pctTahsilat}%</div></div>
-    <div class="db-sum" style="border-color:rgba(232,80,80,.3)"><div class="db-sum-lbl">Kalan Borç</div><div class="db-sum-val" style="color:var(--red)">₺${fmt(totalKalan)}</div></div>
-  </div>`;
-
-  // Tahsilat progress bar
-  const progressHtml=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:14px">
-    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:7px">
-      <span style="text-transform:uppercase;letter-spacing:1px">Genel Tahsilat İlerlemesi</span>
-      <span style="font-family:'IBM Plex Mono',monospace;color:#a0e840;font-size:12px">${pctTahsilat}% · ₺${fmt(totalSatis-totalKalan)} / ₺${fmt(totalSatis)}</span>
-    </div>
-    <div style="height:12px;background:var(--surface2);border-radius:6px;overflow:hidden">
-      <div style="height:100%;width:${pctTahsilat}%;background:linear-gradient(90deg,var(--accent),#a0e840);border-radius:6px;transition:width .5s"></div>
-    </div>
-  </div>`;
-
-  // Animal cards by type
-  const typeBlocks=TYPES.map(type=>{
-    const typeAnimals=animals.filter(h=>h.type===type);
-    if(!typeAnimals.length) return '';
-    const c=THEX[type]; const emoji=TEMOJI[type];
-    const cards=typeAnimals.map(h=>{
-      const owners=ar.filter(r=>r.kupe===h.kupe);
-      const dolu=owners.reduce((a,r)=>a+(r.musteriPay||1),0);
-      const bos=Math.max(0,(h.toplamPay||0)-dolu);
-      const payTam=h.toplamPay&&dolu>=h.toplamPay;
-      const odemeTam=owners.length>0&&owners.every(r=>((r.fiyat||0)-(r.kapora||0))<=0);
-      const kesimDiff=h.kesimTarihi?Math.ceil((new Date(h.kesimTarihi+' 12:00')-now)/(864e5)):null;
-      const kesimGecti=kesimDiff!==null&&kesimDiff<0;
-      const kesimBugun=kesimDiff===0;
-      const kesimYakin=kesimDiff!==null&&kesimDiff>=0&&kesimDiff<=3;
-
-      // Status
-      let statusColor,statusLabel,dotColor;
-      if(kesimGecti){ statusColor='var(--muted)'; statusLabel='✂️ KESİLDİ'; dotColor='#555'; }
-      else if(owners.length===0){ statusColor='var(--red)'; statusLabel='🔴 BAŞLAMADI'; dotColor='var(--red)'; }
-      else if(!payTam){ statusColor='#ff6b35'; statusLabel='⚠️ BOŞ PAY'; dotColor='#ff6b35'; }
-      else if(odemeTam){ statusColor='var(--green)'; statusLabel='✅ TAMAMLANDI'; dotColor='var(--green)'; }
-      else { statusColor='var(--accent)'; statusLabel='🔄 DEVAM EDİYOR'; dotColor='var(--accent)'; }
-
-      // Tarih display
-      let tarihHtml='';
-      if(h.kesimTarihi){
-        const ts=new Date(h.kesimTarihi+' 12:00').toLocaleDateString('tr-TR');
-        let tarihColor='var(--muted)';
-        let tarihExtra='';
-        if(kesimGecti){ tarihColor='var(--muted)'; tarihExtra=` (${Math.abs(kesimDiff)}g önce)`; }
-        else if(kesimBugun){ tarihColor='var(--red)'; tarihExtra=' 🔴 BUGÜN'; }
-        else if(kesimYakin){ tarihColor='var(--accent)'; tarihExtra=` (${kesimDiff}g kaldı)`; }
-        else{ tarihExtra=` (${kesimDiff}g kaldı)`; }
-        tarihHtml=`<div class="db-tarih" style="color:${tarihColor}">✂️ ${ts}${tarihExtra}</div>`;
-      }
-
-      // Pay ring
-      let payRing='';
-      owners.forEach((r,i)=>{ const s=r.musteriPay||1; for(let j=0;j<s;j++) payRing+=`<div class="db-pay-seg" style="background:${SCOLS[i%SCOLS.length]};flex:1"></div>`; });
-      for(let i=0;i<bos;i++) payRing+=`<div class="db-pay-seg" style="background:var(--border);flex:1"></div>`;
-
-      // Owners summary
-      const ownerChips=owners.map((r,i)=>{
-        const kalan=(r.fiyat||0)-(r.kapora||0);
-        const chipColor=kalan<=0?'var(--green)':kalan>=(r.fiyat||0)/2?'var(--red)':'var(--accent)';
-        const pt=payStr(r);
-        return `<div class="db-owner-chip" style="border-color:${SCOLS[i%SCOLS.length]}40">
-          <div class="db-owner-dot" style="background:${SCOLS[i%SCOLS.length]}"></div>
-          <span style="font-weight:500">${esc(r.ad||'—')}</span>
-          ${pt?`<span class="pay-chip" style="font-size:9px">${pt}</span>`:''}
-          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:${chipColor}">${kalan<=0?'✔':'₺'+fmt(kalan)}</span>
-          ${kalan>0?`<button onclick="openOdeme('${r.id}','${r._t}')" style="background:rgba(64,200,112,.15);color:var(--green);border:1px solid var(--green);border-radius:3px;padding:1px 6px;cursor:pointer;font-size:10px;font-family:inherit;white-space:nowrap" title="Ödeme Al">💰</button>`:''}
-        </div>`;
-      }).join('');
-
-      const totKl=owners.reduce((a,r)=>a+((r.fiyat||0)-(r.kapora||0)),0);
-      const totSt=owners.reduce((a,r)=>a+(r.fiyat||0),0);
-      const rowPct=totSt>0?Math.round((totSt-totKl)/totSt*100):0;
-
-      return `<div class="db-animal-row" style="border-color:${kesimBugun?'var(--red)':kesimYakin?'var(--accent)':'var(--border)'}">
-        <div class="db-status-dot" style="background:${dotColor}"></div>
-        <div class="db-animal-main">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="db-kupe" onclick="openHd('${esc(h.kupe)}')">🏷️ ${esc(h.kupe)}</span>
-            ${h.isim?`<span class="db-animal-isim">${esc(h.isim)}</span>`:''}
-            ${h.sira?`<span class="db-sira">#${h.sira}</span>`:''}
-            <span class="db-status-label" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44">${statusLabel}</span>
-          </div>
-          ${tarihHtml}
-          <div style="margin-top:7px">
-            <div class="db-pay-bar" style="width:200px">${payRing||'<div style="flex:1;background:var(--border)"></div>'}</div>
-            <div style="font-size:10px;color:var(--muted);margin-top:3px">${dolu}/${h.toplamPay||'?'} pay${bos>0?` · <span style="color:#ff6b35">${bos} boş</span>`:' · <span style="color:var(--green)">Tam</span>'}</div>
-          </div>
-          <div class="db-owners" style="margin-top:8px">${ownerChips||'<span style="font-size:11px;color:var(--muted)">Sahip yok</span>'}</div>
-        </div>
-        <div class="db-pay-panel">
-          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">Tahsilat</div>
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;color:#a0e840;letter-spacing:1px">${rowPct}%</div>
-          <div style="font-size:10px;color:var(--muted)">₺${fmt(totSt-totKl)} / ₺${fmt(totSt)}</div>
-          ${totKl>0?`<div style="margin-top:5px"><span class="kb cok" style="font-size:11px">₺${fmt(totKl)} kalan</span></div>`:'<div style="margin-top:5px"><span class="kb odendi" style="font-size:11px">✔ Tam</span></div>'}
-        </div>
-      </div>`;
-    }).join('');
-
-    return `<div class="db-type-section">
-      <div class="db-type-hdr" style="color:${c}">
-        <span style="font-size:20px">${emoji}</span>${TLABEL[type]}
-        <span style="font-size:12px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-left:auto">${typeAnimals.length} hayvan</span>
-      </div>
-      ${cards}
-    </div>`;
-  }).join('');
-
-  const noAnimal=animals.length===0?`<div style="text-align:center;padding:60px 20px;color:var(--muted)"><div style="font-size:48px;margin-bottom:12px">📊</div><p>Henüz hayvan kaydı yok.<br>Hayvan ekleyince izleme ekranı dolacak.</p></div>`:'';
-
-  document.getElementById('mc').innerHTML=`<div class="db-wrap">
-    <div class="db-header">
-      <div>
-        <div class="db-title">📊 İzleme Ekranı</div>
-        <div class="db-ts">${sezonAd} sezonu · ${now.toLocaleString('tr-TR')}</div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button onclick="renderDashboard()" style="background:rgba(192,132,252,.15);color:#c084fc;border:1px solid rgba(192,132,252,.4);border-radius:5px;padding:6px 12px;cursor:pointer;font-size:12px;font-family:inherit">🔄 Yenile</button>
-        <button onclick="window.print()" style="background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:6px 12px;cursor:pointer;font-size:12px;font-family:inherit">🖨️ Yazdır</button>
-      </div>
-    </div>
-    ${summaryHtml}
-    ${progressHtml}
-    ${noAnimal}
-    ${typeBlocks}
-  </div>`;
-}
-// ══════════════════════════════════════════════════════
-
-
-
-// FIX #9: payStr reads toplamPay from hayvan live (not stale copy on row)
-
-
-function openOdeme(id, type){
-  const row = getRows(type).find(r => r.id === id);
-  if(!row) return;
-  odemeRowId = id; odemeRowType = type;
-  const kalan = (row.fiyat||0) - (row.kapora||0);
-  const hav = getHav(row.kupe);
-  document.getElementById('od-musteri').textContent = row.ad||'—';
-  document.getElementById('od-hayvan').textContent = [
-    row.kupe ? '🏷️ '+row.kupe : '',
-    hav?.isim ? hav.isim : '',
-    TLABEL[type]||'',
-    hav?.kesimTarihi ? '✂️ '+new Date(hav.kesimTarihi+' 12:00').toLocaleDateString('tr-TR') : ''
-  ].filter(Boolean).join(' · ');
-  document.getElementById('od-satis').textContent = '₺'+fmt(row.fiyat||0);
-  document.getElementById('od-onceki').textContent = '₺'+fmt(row.kapora||0);
-  document.getElementById('od-kalan').textContent = '₺'+fmt(kalan);
-  // Default: today's date
-  document.getElementById('od_tarih').value = new Date().toISOString().slice(0,10);
-  // Default: full remaining amount
-  document.getElementById('od_tutar').value = kalan > 0 ? kalan : '';
-  document.getElementById('od_not').value = '';
-  onOdemeTutarIn();
-  document.getElementById('odemeOverlay').classList.add('open');
-  setTimeout(()=>document.getElementById('od_tutar').select(), 80);
-}
-function closeOdeme(){ document.getElementById('odemeOverlay').classList.remove('open'); odemeRowId=null; odemeRowType=null; }
-function closeOdemeBg(e){ if(e.target===document.getElementById('odemeOverlay')) closeOdeme(); }
-
-function onOdemeTutarIn(){
-  const row = odemeRowId ? getRows(odemeRowType).find(r=>r.id===odemeRowId) : null;
-  if(!row){ document.getElementById('od_sonuc').textContent='—'; return; }
-  const kalan = (row.fiyat||0)-(row.kapora||0);
-  const tutar = +document.getElementById('od_tutar').value||0;
-  const el = document.getElementById('od_sonuc');
-  if(!tutar){ el.style.color='var(--muted)'; el.textContent='Tutar girin…'; return; }
-  if(tutar > kalan){
-    el.style.color='var(--red)'; el.textContent=`⚠️ Fazla ödeme! Kalan yalnızca ₺${fmt(kalan)}.`; return;
-  }
-  const yeniKalan = kalan - tutar;
-  if(yeniKalan === 0){
-    el.style.color='var(--green)'; el.textContent=`✅ Tam ödeme — Borç kapanıyor → ₺0`;
-  } else {
-    el.style.color='var(--accent)'; el.textContent=`Yeni kalan: ₺${fmt(yeniKalan)} (₺${fmt(tutar)} alındı)`;
-  }
-}
-
-function saveOdeme(){
-  const tutar = +document.getElementById('od_tutar').value||0;
-  const tarih = document.getElementById('od_tarih').value;
-  const not   = document.getElementById('od_not').value.trim();
-  if(!tutar||tutar<=0){ document.getElementById('od_tutar').focus(); toast('Tutar giriniz!','err'); return; }
-  const rows = getRows(odemeRowType);
-  const row  = rows.find(r=>r.id===odemeRowId);
-  if(!row){ toast('Kayıt bulunamadı!','err'); return; }
-  const kalan = (row.fiyat||0)-(row.kapora||0);
-  if(tutar > kalan){ toast(`⚠️ Kalan sadece ₺${fmt(kalan)}!`,'err'); return; }
-  // Append to kapora — this makes the kalan recalculate automatically
-  const eskiKapora = row.kapora||0;
-  row.kapora = eskiKapora + tutar;
-  // Store payment log on the row
-  if(!row.odemeler) row.odemeler=[];
-  row.odemeler.push({ tarih, tutar, not, by: currentUser?.name||'', ts: new Date().toISOString() });
-  row.updatedBy = currentUser?.name;
-  row.updatedAt = new Date().toISOString();
-  setRows(odemeRowType, rows);
-  const yeniKalan = (row.fiyat||0)-row.kapora;
-  closeOdeme();
-  renderAll();
-  if(yeniKalan <= 0){
-    toast(`✅ ${esc(row.ad)} — Ödeme tamamlandı! Hesap kapatıldı.`, 'ok');
-  } else {
-    toast(`✔ ₺${fmt(tutar)} alındı · Kalan: ₺${fmt(yeniKalan)}`, 'ok');
-  }
-}
-
-// ══════════════════════════════════════════════════════
-// HESAP MAKİNESİ
-// ══════════════════════════════════════════════════════
-
-
-function renderHesap(){
-  const mc=document.getElementById('mc');
-  const kg=parseFloat(document.getElementById('h_kg')?.value)||0;
-  const bp=parseFloat(document.getElementById('h_fiyat')?.value)||0;
-
-  mc.innerHTML=`<div class="hesap-wrap">
-
-    <!-- GİRİŞ SATIRLARI -->
-    <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:8px;margin-bottom:8px">
-      <div class="hesap-card" style="margin-bottom:0">
-        <div class="hesap-label">⚖️ Ağırlık (Tartı)</div>
-        <div class="hesap-input-row">
-          <input class="hesap-input" id="h_kg" type="number" inputmode="decimal" placeholder="0.000"
-            step="0.001" min="0" value="" oninput="hesapHesapla()" onfocus="this.select()">
-          <span class="hesap-unit">KG</span>
-        </div>
-      </div>
-      <div class="hesap-op">×</div>
-      <div class="hesap-card" style="margin-bottom:0">
-        <div class="hesap-label">💰 Birim Fiyat</div>
-        <div class="hesap-input-row">
-          <input class="hesap-input" id="h_fiyat" type="number" inputmode="decimal" placeholder="0.00"
-            step="0.01" min="0" value="" oninput="hesapHesapla()" onfocus="this.select()">
-          <span class="hesap-unit">₺/KG</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- SONUÇ -->
-    <div class="hesap-result-card">
-      <div class="hesap-result-label">= Hesaplanan Tutar</div>
-      <div class="hesap-result-val" id="hesapResultVal">₺ —</div>
-      <div class="hesap-result-sub" id="hesapResultSub"></div>
-    </div>
-
-    <!-- ANLAŞILAN FİYAT -->
-    <div class="hesap-anlasman-card">
-      <div class="hesap-label">🤝 Anlaşılan / Yuvarlanan Satış Fiyatı</div>
-      <div class="hesap-anlasman-row">
-        <span style="font-size:24px;color:var(--muted);font-family:'Bebas Neue',sans-serif;letter-spacing:2px;flex-shrink:0">₺</span>
-        <input class="hesap-anlasman-input" id="h_anlasman" type="number" inputmode="numeric"
-          placeholder="Anlaşılan tutar" oninput="hesapFark()" onfocus="this.select()">
-      </div>
-      <div class="hesap-diff" id="hesapDiff" style="display:none"></div>
-      <div style="margin-top:10px;display:flex;gap:7px;flex-wrap:wrap;align-items:center">
-        <button class="hesap-round-btn" onclick="hesapYuvarla(-1)">▼ 100'e Aşağı</button>
-        <button class="hesap-round-btn" onclick="hesapYuvarla(1)">▲ 100'e Yukarı</button>
-        <button class="hesap-round-btn" onclick="hesapYuvarla(0)">≈ Tam Yuvarla</button>
-        <div style="flex:1"></div>
-        <button onclick="hesapKaydet()"
-          style="background:rgba(52,211,153,.15);border:1px solid #34d399;border-radius:6px;padding:8px 16px;cursor:pointer;color:#34d399;font-size:13px;font-family:inherit;font-weight:600;transition:all .15s"
-          onmouseover="this.style.background='#34d399';this.style.color='#0f1117'"
-          onmouseout="this.style.background='rgba(52,211,153,.15)';this.style.color='#34d399'">
-          📋 Geçmişe Kaydet
-        </button>
-      </div>
-    </div>
-
-    <!-- GEÇMİŞ -->
-    ${hesapHistory.length?`
-    <div class="hesap-history">
-      <div class="hesap-history-hdr">
-        <span>Son Hesaplamalar <span style="color:var(--accent);font-family:'IBM Plex Mono',monospace">${hesapHistory.length}</span></span>
-        <button onclick="hesapHistory=[];renderHesap()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;font-family:inherit;text-decoration:underline">Temizle</button>
-      </div>
-      ${hesapHistory.slice().reverse().map(h=>{
-        const diff=h.anlasman!=null?(h.anlasman-h.carpim):null;
-        const dc=diff==null?'var(--muted)':diff>0?'var(--green)':diff<0?'var(--red)':'var(--muted)';
-        const dt=diff==null?'':(diff>0?'+':'')+`₺${Math.abs(diff).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-        const ts=new Date(h.ts).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
-        return `<div class="hesap-hist-row">
-          <div>
-            <span style="font-family:'IBM Plex Mono',monospace;font-weight:600">${h.kg} kg</span>
-            <span style="color:var(--muted);font-size:11px;margin:0 4px">×</span>
-            <span style="font-family:'IBM Plex Mono',monospace">₺${h.birimFiyat}</span>
-            <span style="color:var(--muted);font-size:11px;margin:0 4px">=</span>
-            <span style="font-family:'IBM Plex Mono',monospace;color:#34d399;font-weight:600">₺${h.carpim.toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
-            ${h.anlasman!=null?`<span style="font-size:11px;color:var(--accent);margin-left:7px">→ ₺${fmt(h.anlasman)}</span>`:''}
-          </div>
-          <div style="text-align:right;flex-shrink:0">
-            ${diff!=null?`<div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${dc}">${dt}</div>`:''}
-            <div style="font-size:10px;color:var(--muted)">${ts}</div>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`:''}
-
-  </div>`;
-
-  setTimeout(()=>{ document.getElementById('h_kg')?.focus(); },80);
-}
-
-function hesapHesapla(){
-  const kg=parseFloat(document.getElementById('h_kg')?.value)||0;
-  const bp=parseFloat(document.getElementById('h_fiyat')?.value)||0;
-  const val=document.getElementById('hesapResultVal');
-  const sub=document.getElementById('hesapResultSub');
-  if(!val) return;
-  if(!kg||!bp){ val.textContent='₺ —'; if(sub) sub.textContent=''; return; }
-  const carpim=kg*bp;
-  val.classList.remove('anim'); void val.offsetWidth; val.classList.add('anim');
-  val.textContent='₺ '+carpim.toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  if(sub) sub.textContent=`${kg} kg  ×  ₺${bp}/kg`;
-  hesapFark();
-}
-
-function hesapFark(){
-  const kg=parseFloat(document.getElementById('h_kg')?.value)||0;
-  const bp=parseFloat(document.getElementById('h_fiyat')?.value)||0;
-  const an=parseFloat(document.getElementById('h_anlasman')?.value);
-  const el=document.getElementById('hesapDiff');
-  if(!el) return;
-  if(!kg||!bp||isNaN(an)||!an){ el.style.display='none'; return; }
-  const carpim=kg*bp;
-  const diff=an-carpim;
-  const pct=carpim>0?diff/carpim*100:0;
-  const dc=diff>0?'var(--green)':diff<0?'var(--red)':'var(--muted)';
-  el.style.display='flex';
-  el.innerHTML=`
-    <div class="hesap-diff-item"><div class="hesap-diff-lbl">Hesaplanan</div>
-      <div class="hesap-diff-val" style="color:#34d399">₺${carpim.toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
-    <div class="hesap-diff-item"><div class="hesap-diff-lbl">Anlaşılan</div>
-      <div class="hesap-diff-val" style="color:var(--accent)">₺${fmt(an)}</div></div>
-    <div class="hesap-diff-item"><div class="hesap-diff-lbl">Fark</div>
-      <div class="hesap-diff-val" style="color:${dc}">${diff>=0?'+':''}₺${Math.abs(diff).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
-    <div class="hesap-diff-item"><div class="hesap-diff-lbl">% Fark</div>
-      <div class="hesap-diff-val" style="color:${dc}">${pct>=0?'+':''}${pct.toFixed(1)}%</div></div>`;
+    <div class="ksump"><div class="ksump-lbl" style="color:;
 }
 
 function hesapYuvarla(dir){
