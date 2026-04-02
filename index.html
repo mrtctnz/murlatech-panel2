@@ -2040,7 +2040,7 @@ async function silHayvan(kupe){
       rows.forEach(r=>{if(r.kupe===kupe){r.kupe='';r.sira=0;}});
       setRows(t,rows);
     });
-    toast(,'err');
+    toast(`Hayvan silindi - ${owners.length} kayittan kupe baglantisi kaldirildi`,'err');
   } else {
     toast('🗑️ Hayvan silindi','err');
   }
