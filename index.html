@@ -1189,7 +1189,14 @@ async function emailIleri(){
   let foundIsletmeId = null;
 
   if(isOnline){
-    const {data} = await sb.from('kullanicilar').select('*').eq('email', email).limit(1);
+    const {data, error} = await sb.from('kullanicilar').select('*').eq('email', email).limit(1);
+    if(error){
+      console.error('Kullanıcı arama hatası:', error);
+      errEl.textContent='Bağlantı hatası: '+error.message;
+      errEl.style.display='block';
+      document.querySelector('#loginStep1 button').textContent='İLERİ →';
+      return;
+    }
     if(data && data.length){
       foundUser = data[0];
       foundIsletmeId = foundUser.isletme_id || null;
@@ -2001,7 +2008,7 @@ async function saveH(){
       rows.forEach(r=>{if(r.kupe===editHKupe) r.kupe=kupe;});
       setRows(t,rows);
     });
-    toast(,'ok');
+    toast(`Kupe guncellendi: ${editHKupe} -> ${kupe}`,'ok');
   }
 
   const hayvanObj={kupe,isim:document.getElementById('h_isim').value.trim(),
