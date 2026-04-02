@@ -2029,8 +2029,8 @@ async function silHayvan(kupe){
   const h=getHav(kupe);
   const owners=allRows().filter(r=>r.kupe===kupe);
   const msg=owners.length
-    ? 
-    : ;
+    ? `"${kupe}" kupeli hayvan silinecek. ${owners.length} musteri kaydından kupe baglantisi kaldirilacak. Emin misiniz?`
+    : `"${kupe}" kupeli hayvan silinecek. Emin misiniz?`;
   if(!confirm(msg)) return;
   const hd=getHD(); delete hd[kupe]; setHD(hd);
   if(h?.id) await dbDelete('hayvanlar', h.id);
